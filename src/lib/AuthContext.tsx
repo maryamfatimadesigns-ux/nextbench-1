@@ -9,9 +9,12 @@ export interface UserData {
   email: string;
   school: string;
   verified: boolean;
+  verificationStatus: 'pending' | 'approved' | 'rejected';
   reputation: number;
   isAdmin: boolean;
   profilePicture?: string | null;
+  idCardUrl?: string | null;
+  selfieUrl?: string | null;
   about?: string | null;
   createdAt: string;
   updatedAt: string;

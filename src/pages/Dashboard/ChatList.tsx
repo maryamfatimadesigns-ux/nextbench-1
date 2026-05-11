@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { MessageSquare, User, ShieldCheck, ChevronRight, Search } from 'lucide-react';
+import { MessageSquare, User, ShieldCheck, ChevronRight, Search, Lock } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, getDoc, doc } from 'firebase/firestore';
@@ -18,7 +18,7 @@ interface ChatRoom {
 }
 
 export default function ChatList() {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const [chatRooms, setChatRooms] = useState<ChatRoom[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -57,6 +57,23 @@ export default function ChatList() {
 
     return () => unsubscribe();
   }, [user]);
+
+  if (userData && !userData.verified) {
+    return (
+      <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto text-center">
+        <div className="bg-white rounded-3xl p-20 luxury-shadow border border-luxury-ink/5">
+          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Lock className="text-amber-500" size={32} />
+          </div>
+          <h3 className="text-2xl font-serif font-bold text-luxury-ink mb-2 italic">Verification <span className="not-italic">Required</span></h3>
+          <p className="text-luxury-ink/40 text-sm max-w-sm mx-auto mb-8 font-medium">To keep our campus safe, you must be a verified student to access direct messaging.</p>
+          <Link to="/verification" className="inline-block bg-brand-teal text-white px-8 py-4 rounded-full font-bold hover:bg-brand-mint transition-all luxury-shadow uppercase text-[10px] tracking-widest">
+            Complete Verification
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto">

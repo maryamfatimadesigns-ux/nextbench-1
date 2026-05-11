@@ -2,8 +2,9 @@ import { motion } from 'motion/react';
 import { ShieldCheck, Mail, Lock, ArrowRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import React, { useState } from 'react';
-import { auth } from '../../lib/firebase';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { auth, db } from '../../lib/firebase';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -16,7 +17,24 @@ export default function Login() {
     setError('');
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      
+      // Check if user exists in database
+      const docRef = doc(db, 'users', result.user.uid);
+      const docSnap = await getDoc(docRef);
+      
+      if (!docSnap.exists()) {
+        await signOut(auth);
+        setError("Account not found. Please sign up first.");
+        return;
+      }
+      
+      const data = docSnap.data();
+      if (data.verificationStatus === 'rejected') {
+        navigate('/verification?rejected=true');
+        return;
+      }
+      
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to authenticate');

@@ -124,6 +124,7 @@ export default function ProductDetail() {
 
   const handleContactSeller = async () => {
     if (!user || !userData) { showToast('Please log in to contact the seller.', 'warning'); return; }
+    if (!userData.verified) { showToast('Only verified students can message sellers.', 'warning'); return; }
     if (!product || !id) return;
     if (product.sellerId === user.uid) { showToast('This is your listing.', 'info'); return; }
     setIsStartingChat(true);
@@ -281,9 +282,8 @@ export default function ProductDetail() {
               {!isSeller && (
                 <>
                   <button onClick={handleReserve} disabled={!canReserve || isReserving}
-                    className={`w-full py-4 text-white text-xs font-bold uppercase tracking-[0.2em] shadow-lg transition-all rounded-lg ${
-                      isSold ? 'bg-luxury-ink/20 cursor-not-allowed' : isReserved ? 'bg-amber-500 cursor-not-allowed' : 'bg-brand-teal shadow-brand-teal/20 hover:bg-brand-pink'
-                    }`}>
+                    className={`w-full py-4 text-white text-xs font-bold uppercase tracking-[0.2em] shadow-lg transition-all rounded-lg ${isSold ? 'bg-luxury-ink/20 cursor-not-allowed' : isReserved ? 'bg-amber-500 cursor-not-allowed' : 'bg-brand-teal shadow-brand-teal/20 hover:bg-brand-pink'
+                      }`}>
                     {isReserving ? 'Reserving...' : isSold ? 'Sold Out' : isReserved ? 'Already Reserved' : 'Reserve Now'}
                   </button>
                   <button onClick={handleContactSeller} disabled={isStartingChat}
@@ -336,7 +336,7 @@ export default function ProductDetail() {
                   <div>
                     <p className="font-bold text-luxury-ink text-sm">{r.reviewerName}</p>
                     <div className="flex items-center gap-1">
-                      {[1,2,3,4,5].map(s => <Star key={s} size={12} className={s <= r.rating ? 'text-amber-500 fill-amber-500' : 'text-luxury-ink/10'} />)}
+                      {[1, 2, 3, 4, 5].map(s => <Star key={s} size={12} className={s <= r.rating ? 'text-amber-500 fill-amber-500' : 'text-luxury-ink/10'} />)}
                     </div>
                   </div>
                 </div>
@@ -356,7 +356,7 @@ export default function ProductDetail() {
               <h3 className="text-xl font-bold text-luxury-ink mb-2">Rate this Transaction</h3>
               <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/40 mb-6">How was your experience?</p>
               <div className="flex items-center gap-2 mb-6 justify-center">
-                {[1,2,3,4,5].map(s => (
+                {[1, 2, 3, 4, 5].map(s => (
                   <button key={s} onClick={() => setReviewRating(s)} className="p-1 transition-transform hover:scale-125">
                     <Star size={32} className={s <= reviewRating ? 'text-amber-500 fill-amber-500' : 'text-luxury-ink/10'} />
                   </button>

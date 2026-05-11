@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { ShieldCheck, XCircle, AlertTriangle, Filter, CheckCircle, Trash2, Ban, ChevronRight, Users, Package, Crown, Eye, RefreshCw } from 'lucide-react';
+import { ShieldCheck, XCircle, AlertTriangle, Filter, CheckCircle, Trash2, Ban, ChevronRight, Users, Package, Crown, Eye, RefreshCw, IdCard, Camera } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, updateDoc, doc, deleteDoc, serverTimestamp, onSnapshot, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -8,7 +8,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { createNotification } from '../../lib/notifications';
 
-interface PendingUser { id: string; name: string; school: string; email: string; verified: boolean; isAdmin: boolean; reputation: number; }
+interface PendingUser { id: string; name: string; school: string; email: string; verified: boolean; isAdmin: boolean; reputation: number; idCardUrl?: string; selfieUrl?: string; }
 interface PendingProduct { id: string; title: string; category: string; price: number; sellerName: string; image: string; description: string; }
 
 export default function AdminPanel() {
@@ -45,7 +45,7 @@ export default function AdminPanel() {
     if (activeTab === 'Verifications') {
       const fetchPending = async () => {
         try {
-          const q = query(collection(db, 'users'), where('verified', '==', false));
+          const q = query(collection(db, 'users'), where('verificationStatus', '==', 'pending'));
           const snapshot = await getDocs(q);
           setPendingVerifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PendingUser)));
         } catch (err) { handleFirestoreError(err, OperationType.LIST, 'users'); }
@@ -73,18 +73,23 @@ export default function AdminPanel() {
 
   const handleApproveUser = async (userId: string, userName: string) => {
     try {
-      await updateDoc(doc(db, 'users', userId), { verified: true, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'users', userId), { verified: true, verificationStatus: 'approved', updatedAt: serverTimestamp() });
       setPendingVerifications(prev => prev.filter(u => u.id !== userId));
       showToast(`${userName} has been verified`, 'success');
       createNotification({ userId, type: 'user_approved', title: 'Welcome to NextBench!', message: 'Your account has been verified. You can now list and reserve items.', link: '/marketplace' });
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`); }
   };
 
-  const handleRejectUser = async (userId: string) => {
+  const handleRejectUser = async (userId: string, userName: string, userEmail: string) => {
     try {
-      await deleteDoc(doc(db, 'users', userId));
+      await updateDoc(doc(db, 'users', userId), { verified: false, verificationStatus: 'rejected', updatedAt: serverTimestamp() });
       setPendingVerifications(prev => prev.filter(u => u.id !== userId));
       showToast('User application rejected', 'info');
+
+      // Open email client
+      const subject = encodeURIComponent("NextBench Application Rejected");
+      const body = encodeURIComponent(`Hi ${userName},\n\nUnfortunately, your application to NextBench has been rejected because your ID card photo was unclear or invalid.\n\nPlease log in to NextBench again and re-upload a clear photo of your official school ID to be verified.\n\nThanks,\nThe NextBench Team`);
+      window.location.href = `mailto:${userEmail}?subject=${subject}&body=${body}`;
     } catch (err) { handleFirestoreError(err, OperationType.DELETE, `users/${userId}`); }
   };
 
@@ -160,9 +165,8 @@ export default function AdminPanel() {
       <div className="flex bg-white rounded-2xl p-1.5 luxury-shadow border border-luxury-ink/5 mb-10 overflow-x-auto no-scrollbar">
         {tabs.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`px-6 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap ${
-              activeTab === tab ? 'bg-luxury-ink text-white luxury-shadow' : 'text-luxury-ink/30 hover:text-luxury-ink/60'
-            }`}>{tab}</button>
+            className={`px-6 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === tab ? 'bg-luxury-ink text-white luxury-shadow' : 'text-luxury-ink/30 hover:text-luxury-ink/60'
+              }`}>{tab}</button>
         ))}
       </div>
 
@@ -182,7 +186,17 @@ export default function AdminPanel() {
                 <p className="text-xs font-medium text-luxury-ink/40">{item.school} • {item.email}</p>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => handleRejectUser(item.id)} className="p-3 rounded-xl border border-luxury-ink/5 hover:bg-red-50 hover:text-red-500 transition-all text-luxury-ink/20"><XCircle size={20} /></button>
+                {item.idCardUrl && (
+                  <a href={item.idCardUrl} target="_blank" rel="noopener noreferrer" className="p-3 rounded-xl border border-luxury-ink/5 hover:bg-brand-teal/5 hover:text-brand-teal transition-all text-luxury-ink/30" title="View ID Card">
+                    <IdCard size={20} />
+                  </a>
+                )}
+                {item.selfieUrl && (
+                  <a href={item.selfieUrl} target="_blank" rel="noopener noreferrer" className="p-3 rounded-xl border border-luxury-ink/5 hover:bg-brand-pink/5 hover:text-brand-pink transition-all text-luxury-ink/30" title="View Selfie">
+                    <Camera size={20} />
+                  </a>
+                )}
+                <button onClick={() => handleRejectUser(item.id, item.name, item.email)} className="p-3 rounded-xl border border-luxury-ink/5 hover:bg-red-50 hover:text-red-500 transition-all text-luxury-ink/20"><XCircle size={20} /></button>
                 <button onClick={() => handleApproveUser(item.id, item.name)} className="p-3 rounded-xl bg-brand-teal text-white hover:bg-brand-mint transition-all shadow-lg"><CheckCircle size={20} /></button>
               </div>
             </motion.div>
@@ -235,9 +249,8 @@ export default function AdminPanel() {
               <div className="flex items-center gap-3">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/20">Rep: {u.reputation?.toFixed(1)}</span>
                 <button onClick={() => toggleAdmin(u.id, u.isAdmin, u.name)}
-                  className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                    u.isAdmin ? 'bg-brand-pink/10 text-brand-pink hover:bg-red-50 hover:text-red-500 border border-brand-pink/20' : 'bg-luxury-ink/5 text-luxury-ink/30 hover:bg-brand-teal/10 hover:text-brand-teal border border-luxury-ink/5'
-                  }`}>
+                  className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${u.isAdmin ? 'bg-brand-pink/10 text-brand-pink hover:bg-red-50 hover:text-red-500 border border-brand-pink/20' : 'bg-luxury-ink/5 text-luxury-ink/30 hover:bg-brand-teal/10 hover:text-brand-teal border border-luxury-ink/5'
+                    }`}>
                   {u.isAdmin ? 'Demote' : 'Make Admin'}
                 </button>
               </div>

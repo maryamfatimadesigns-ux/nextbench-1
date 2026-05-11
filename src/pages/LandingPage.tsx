@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { ArrowRight, ShieldCheck, Truck, RefreshCcw, GraduationCap, PackageCheck, Zap } from 'lucide-react';
+import { ArrowRight, ShieldCheck, Truck, RefreshCcw, GraduationCap, PackageCheck, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function LandingPage() {
@@ -56,28 +56,13 @@ export default function LandingPage() {
               >
                 Explore Marketplace
               </Link>
-              <Link 
-                to="/#how-it-works" 
+              <a 
+                href="#how-it-works" 
                 className="px-8 py-4 flex items-center gap-2 text-brand-pink font-bold uppercase tracking-widest text-xs group"
               >
                 Learn How It Works
                 <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </motion.div>
-
-            <motion.div 
-              variants={itemVariants}
-              className="mt-20 flex items-center gap-12"
-            >
-              <div className="flex flex-col">
-                <span className="text-3xl font-serif font-bold text-luxury-ink">12k+</span>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40">Verified Students</span>
-              </div>
-              <div className="w-px h-10 bg-luxury-ink/10" />
-              <div className="flex flex-col">
-                <span className="text-3xl font-serif font-bold text-luxury-ink">45+</span>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40">Partner Schools</span>
-              </div>
+              </a>
             </motion.div>
           </motion.div>
 
@@ -94,25 +79,13 @@ export default function LandingPage() {
                 className="w-full rounded-2xl grayscale-[0.2] hover:grayscale-0 transition-all duration-700 aspect-[4/5] object-cover"
                 referrerPolicy="no-referrer"
               />
-              <div className="absolute -bottom-10 -left-10 bg-white p-6 rounded-2xl luxury-shadow max-w-xs border border-luxury-ink/5">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="w-10 h-10 rounded-full bg-brand-teal-mint/20 flex items-center justify-center">
-                    <ShieldCheck className="text-brand-teal" size={20} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-luxury-ink">Aaditya Roy</p>
-                    <p className="text-[10px] uppercase font-bold text-brand-teal tracking-wider">Verified Senior</p>
-                  </div>
-                </div>
-                <p className="text-sm text-luxury-ink/70 font-medium">Just listed 4 NEET prep modules at 60% off for my juniors.</p>
-              </div>
             </div>
           </motion.div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="bg-white py-32 px-6">
+      {/* How it Works Section */}
+      <section id="how-it-works" className="bg-white py-32 px-6">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row md:items-end justify-between mb-20 gap-8">
             <div className="max-w-2xl">
@@ -149,8 +122,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Graduation Mode Section */}
-      <section className="py-32 px-6 overflow-hidden">
+      {/* Trust Section */}
+      <section id="trust" className="py-32 px-6 overflow-hidden">
         <div className="max-w-7xl mx-auto bg-luxury-ink rounded-[3rem] p-12 md:p-24 relative overflow-hidden">
           <div className="relative z-10 max-w-xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full border border-white/20 mb-8">
@@ -171,13 +144,11 @@ export default function LandingPage() {
               Activate Graduation Mode
             </Link>
           </div>
-          <div className="absolute right-0 top-0 bottom-0 w-1/2 hidden lg:block">
-            <img 
-              src="https://images.unsplash.com/photo-1523050853064-85a8efda54b3?q=80&w=2070&auto=format&fit=crop" 
-              alt="Graduation Tradition" 
-              className="w-full h-full object-cover opacity-30 mix-blend-luminosity grayscale shadow-inner"
-              referrerPolicy="no-referrer"
-            />
+          {/* Decorative icon instead of broken bg image */}
+          <div className="absolute right-12 md:right-24 top-1/2 -translate-y-1/2 hidden lg:flex items-center justify-center">
+            <div className="w-64 h-64 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
+              <GraduationCap className="text-white/20" size={120} />
+            </div>
           </div>
         </div>
       </section>
@@ -188,17 +159,29 @@ export default function LandingPage() {
           <h2 className="text-5xl md:text-7xl font-serif font-bold text-luxury-ink mb-12 leading-tight">
             Elevate Your Student Economy.
           </h2>
-          <div className="flex flex-col md:flex-row items-center justify-center gap-6">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-6 mb-16">
             <Link to="/signup" className="w-full md:w-auto bg-luxury-ink text-white px-12 py-6 rounded-full text-lg font-bold luxury-shadow hover:scale-105 transition-all">
               Join NextBench Today
             </Link>
             <p className="text-luxury-ink/40 text-sm font-medium">No spam. Only verified student deals.</p>
+          </div>
+
+          {/* Made by credit */}
+          <div className="flex flex-col items-center gap-4 pt-12 border-t border-luxury-ink/5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-luxury-ink/30">
+              Made by Maryam Fatima, a student of Loreto Convent Lucknow
+            </p>
+            <div className="flex items-center gap-3">
+              <img 
+                src="https://img.ezyschooling.com/image?url=https%3A%2F%2Fd3bat55ebwjhsf.cloudfront.net%2Fschools%2Fcover%2F11565%2Fuser_root_user%2540ezy.com%2Fimages.jpeg&width=400" 
+                alt="Loreto Convent Lucknow" 
+                className="w-8 h-8 rounded-full object-cover border border-luxury-ink/10"
+              />
+              <span className="text-[10px] font-medium text-luxury-ink/25 tracking-wide">Loreto Convent Lucknow</span>
+            </div>
           </div>
         </div>
       </section>
     </div>
   );
 }
-
-// Fixed missing import
-import { MapPin } from 'lucide-react';

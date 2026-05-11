@@ -28,14 +28,14 @@ export default function Navbar() {
     navigate('/');
   };
 
-  const navLinks = [
+  const navLinks: { name: string; path: string; isHash?: boolean }[] = [
     { name: 'Marketplace', path: '/marketplace' },
   ];
 
   if (!user) {
     navLinks.push(
-      { name: 'How it Works', path: '/#how-it-works' },
-      { name: 'Trust', path: '/#trust' }
+      { name: 'How it Works', path: '#how-it-works', isHash: true },
+      { name: 'Trust', path: '#trust', isHash: true }
     );
   }
 
@@ -56,17 +56,36 @@ export default function Navbar() {
         {/* Desktop Links */}
         <div className="hidden md:flex items-center gap-10">
           {navLinks.map((link) => (
-            <Link 
-              key={link.name} 
-              to={link.path}
-              className={`text-[13px] font-semibold uppercase tracking-widest transition-colors ${
-                location.pathname === link.path 
-                  ? 'text-brand-pink' 
-                  : 'text-brand-teal/70 hover:text-brand-pink'
-              }`}
-            >
-              {link.name}
-            </Link>
+            link.isHash ? (
+              <a
+                key={link.name}
+                href={link.path}
+                onClick={(e) => {
+                  if (isLandingPage) {
+                    e.preventDefault();
+                    const el = document.querySelector(link.path);
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  } else {
+                    navigate('/' + link.path);
+                  }
+                }}
+                className={`text-[13px] font-semibold uppercase tracking-widest transition-colors text-brand-teal/70 hover:text-brand-pink`}
+              >
+                {link.name}
+              </a>
+            ) : (
+              <Link 
+                key={link.name} 
+                to={link.path}
+                className={`text-[13px] font-semibold uppercase tracking-widest transition-colors ${
+                  location.pathname === link.path 
+                    ? 'text-brand-pink' 
+                    : 'text-brand-teal/70 hover:text-brand-pink'
+                }`}
+              >
+                {link.name}
+              </Link>
+            )
           ))}
           {user && (
             <>
@@ -141,14 +160,34 @@ export default function Navbar() {
         >
           <div className="flex flex-col gap-6">
             {navLinks.map((link) => (
-              <Link 
-                key={link.name} 
-                to={link.path}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="text-lg font-medium text-luxury-ink"
-              >
-                {link.name}
-              </Link>
+              link.isHash ? (
+                <a
+                  key={link.name}
+                  href={link.path}
+                  onClick={(e) => {
+                    setIsMobileMenuOpen(false);
+                    if (isLandingPage) {
+                      e.preventDefault();
+                      const el = document.querySelector(link.path);
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                      navigate('/' + link.path);
+                    }
+                  }}
+                  className="text-lg font-medium text-luxury-ink"
+                >
+                  {link.name}
+                </a>
+              ) : (
+                <Link 
+                  key={link.name} 
+                  to={link.path}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="text-lg font-medium text-luxury-ink"
+                >
+                  {link.name}
+                </Link>
+              )
             ))}
             {user && (
               <>

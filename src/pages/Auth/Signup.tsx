@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import React, { useState } from 'react';
 import { auth, db } from '../../lib/firebase';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
 const SCHOOLS = [
   "Loreto Convent",
@@ -143,22 +143,31 @@ export default function Signup() {
       
       const user = result.user;
       
-      // Store user info in Firestore
-      await setDoc(doc(db, 'users', user.uid), {
-        name: user.displayName || 'Unknown Student',
-        email: user.email || '',
-        school: school,
-        verified: false,
-        reputation: 5.0,
-        isAdmin: false,
-        profilePicture: user.photoURL || null,
-        about: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      // Check if user already exists
+      const docRef = doc(db, 'users', user.uid);
+      const docSnap = await getDoc(docRef);
+      
+      if (!docSnap.exists()) {
+        // Store user info in Firestore only if new
+        await setDoc(docRef, {
+          name: user.displayName || 'Unknown Student',
+          email: user.email || '',
+          school: school,
+          verified: false,
+          verificationStatus: 'pending',
+          reputation: 5.0,
+          isAdmin: false,
+          profilePicture: user.photoURL || null,
+          idCardUrl: null,
+          about: null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
 
       navigate('/verification');
     } catch (err: any) {
+      console.error("Signup Error Details:", err);
       setError(err.message || 'Failed to authenticate');
     }
   };
