@@ -54,6 +54,13 @@ export default function SellItem() {
     if (!user || !userData) { showToast('Must be logged in.', 'warning'); return; }
     if (!userData.verified && !userData.isAdmin) { showToast('Only verified users can sell items.', 'warning'); return; }
 
+    const titleTrimmed = formData.title.trim();
+    const priceNum = Number(formData.price);
+
+    if (titleTrimmed.length < 3) { showToast('Title must be at least 3 characters.', 'warning'); return; }
+    if (isNaN(priceNum) || priceNum < 1) { showToast('Price must be at least ₹1.', 'warning'); return; }
+    if (priceNum > 100000) { showToast('Price cannot exceed ₹1,00,000.', 'warning'); return; }
+
     let imageUrl = formData.image;
 
     if (uploadMode === 'upload') {
@@ -103,7 +110,7 @@ export default function SellItem() {
         <div className="space-y-10">
           <div>
             <h1 className="text-5xl font-serif font-bold text-luxury-ink mb-4 italic">List Your <span className="not-italic">Asset.</span></h1>
-            <p className="text-luxury-ink/50 font-medium">Create a premium listing for the NextBench community.</p>
+            <p className="text-luxury-ink/50 font-medium">Create a premium listing for the Nextbench community.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-8">
@@ -160,8 +167,9 @@ export default function SellItem() {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40 ml-1">Desired Price (₹)</label>
-                <input type="number" value={formData.price} onChange={(e) => setFormData({...formData, price: e.target.value})} placeholder="500" required min="0"
+                <input type="number" value={formData.price} onChange={(e) => setFormData({...formData, price: e.target.value})} placeholder="500" required min="1" max="100000"
                   className="w-full bg-white border border-luxury-ink/5 rounded-2xl py-4 px-6 luxury-shadow focus:outline-none focus:border-brand-teal transition-all text-sm font-medium" />
+                <p className="text-[10px] text-luxury-ink/30 mt-1 ml-1">₹1 – ₹1,00,000</p>
               </div>
             </div>
 
@@ -186,6 +194,7 @@ export default function SellItem() {
               <label className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40 ml-1">Description</label>
               <textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} placeholder="Describe the condition, history, and usage details..." rows={4} maxLength={2000}
                 className="w-full bg-white border border-luxury-ink/5 rounded-2xl py-5 px-6 luxury-shadow focus:outline-none focus:border-brand-teal transition-all text-sm font-medium resize-none" />
+              <p className="text-[10px] text-luxury-ink/30 mt-1 ml-1 text-right">{formData.description.length}/2000</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

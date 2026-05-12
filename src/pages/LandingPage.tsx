@@ -75,7 +75,7 @@ export default function LandingPage() {
             <div className="relative z-10 p-4 bg-white rounded-3xl luxury-shadow border border-luxury-ink/5">
               <img 
                 src="https://images.unsplash.com/photo-1543269664-76bc3997d9ea?q=80&w=2070&auto=format&fit=crop" 
-                alt="NextBench Platform Preview" 
+                alt="Nextbench Platform Preview" 
                 className="w-full rounded-2xl grayscale-[0.2] hover:grayscale-0 transition-all duration-700 aspect-[4/5] object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -90,7 +90,7 @@ export default function LandingPage() {
           <div className="flex flex-col md:flex-row md:items-end justify-between mb-20 gap-8">
             <div className="max-w-2xl">
               <h2 className="text-5xl font-serif font-bold text-luxury-ink mb-6">Intentionally Designed for the Modern Student.</h2>
-              <p className="text-lg text-luxury-ink/50">NextBench replaces chaotic school groups and shady marketplaces with a premium, trusted ecosystem.</p>
+              <p className="text-lg text-luxury-ink/50">Nextbench replaces chaotic school groups and shady marketplaces with a premium, trusted ecosystem.</p>
             </div>
             <Link to="/marketplace" className="inline-flex items-center gap-2 text-brand-pink font-bold border-b-2 border-brand-pink/20 hover:border-brand-pink transition-all pb-1">
               View All Features <ArrowRight size={18} />
@@ -161,7 +161,7 @@ export default function LandingPage() {
           </h2>
           <div className="flex flex-col md:flex-row items-center justify-center gap-6 mb-16">
             <Link to="/signup" className="w-full md:w-auto bg-luxury-ink text-white px-12 py-6 rounded-full text-lg font-bold luxury-shadow hover:scale-105 transition-all">
-              Join NextBench Today
+              Join Nextbench Today
             </Link>
             <p className="text-luxury-ink/40 text-sm font-medium">No spam. Only verified student deals.</p>
           </div>

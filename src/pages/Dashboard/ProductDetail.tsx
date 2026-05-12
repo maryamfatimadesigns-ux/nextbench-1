@@ -115,7 +115,7 @@ export default function ProductDetail() {
 
   const handleShare = async () => {
     if (!product) return;
-    const shareData = { title: product.title, text: `Check out "${product.title}" on NextBench — ₹${product.price}`, url: window.location.href };
+    const shareData = { title: product.title, text: `Check out "${product.title}" on Nextbench — ₹${product.price}`, url: window.location.href };
     try {
       if (navigator.share) { await navigator.share(shareData); }
       else { await navigator.clipboard.writeText(window.location.href); showToast('Link copied to clipboard!', 'success'); }

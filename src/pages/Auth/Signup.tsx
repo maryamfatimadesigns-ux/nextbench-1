@@ -1,10 +1,11 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Mail, Lock, Building, ArrowRight, ShieldCheck, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../lib/firebase';
 import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { useAuth } from '../../lib/AuthContext';
 
 const SCHOOLS = [
   "Loreto Convent",
@@ -125,15 +126,36 @@ function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 export default function Signup() {
   const [school, setSchool] = useState('');
   const [error, setError] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const redirectedRef = useRef(false);
+
+  // Redirect already-authenticated users (only on initial load, not during active sign-in)
+  useEffect(() => {
+    if (!loading && user && !isSigningIn && !redirectedRef.current) {
+      redirectedRef.current = true;
+      navigate('/marketplace', { replace: true });
+    }
+  }, [loading, user, isSigningIn, navigate]);
+
+  if (loading) return null;
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+    setIsSigningIn(true);
+
     if (!school) {
-      setError('Please select/enter your school.');
+      setError('Please select your school.');
+      setIsSigningIn(false);
+      return;
+    }
+    if (!agreedToTerms) {
+      setError('Please agree to the Terms of Service and Privacy Policy.');
+      setIsSigningIn(false);
       return;
     }
 
@@ -188,6 +210,7 @@ export default function Signup() {
     } catch (err: any) {
       console.error("Signup Error Details:", err);
       setError(err.message || 'Failed to authenticate');
+      setIsSigningIn(false);
     }
   };
 
@@ -244,9 +267,34 @@ export default function Signup() {
               </button>
             </div>
 
+            {/* Terms agreement */}
+            <label className="flex items-start gap-3 cursor-pointer group mt-2">
+              <div className="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                  agreedToTerms ? 'bg-brand-teal border-brand-teal' : 'border-luxury-ink/20 bg-white group-hover:border-brand-teal/50'
+                }`}>
+                  {agreedToTerms && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                </div>
+              </div>
+              <span className="text-xs text-luxury-ink/50 leading-relaxed">
+                I agree to Nextbench's{' '}
+                <Link to="/terms" target="_blank" className="text-brand-teal font-bold hover:text-brand-pink transition-colors">Terms of Service</Link>{' '}
+                and{' '}
+                <Link to="/privacy" target="_blank" className="text-brand-teal font-bold hover:text-brand-pink transition-colors">Privacy Policy</Link>.
+                I confirm I am a currently enrolled student.
+              </span>
+            </label>
+
             <button 
               type="submit"
-              className="w-full bg-brand-pink text-white py-5 rounded-sm font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-brand-pink/10 hover:bg-brand-teal transition-all active:scale-[0.98]"
+              disabled={!agreedToTerms}
+              className="w-full bg-brand-pink text-white py-5 rounded-sm font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-brand-pink/10 hover:bg-brand-teal transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-pink"
             >
               Initialize Verification with Google
             </button>
@@ -270,12 +318,12 @@ export default function Signup() {
           </p>
           <div className="grid grid-cols-2 gap-px bg-white/10">
             <div className="p-8 bg-brand-teal">
-              <p className="text-3xl font-light text-white mb-2">12k+</p>
-              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Members</p>
+              <p className="text-3xl font-light text-white mb-2">ID</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Verified</p>
             </div>
             <div className="p-8 bg-brand-teal">
               <p className="text-3xl font-light text-white mb-2">100%</p>
-              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Secure</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Trusted</p>
             </div>
           </div>
         </div>

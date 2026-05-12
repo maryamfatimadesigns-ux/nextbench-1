@@ -47,10 +47,8 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-6 md:px-12 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 bg-brand-teal rounded-full transition-transform group-hover:scale-110" />
-          <span className="text-2xl font-bold tracking-tight text-brand-teal">
-            NextBench
-          </span>
+          <img src="/logo.png" alt="Nextbench Logo" className="h-8 w-auto transition-transform group-hover:scale-105" />
+          <span className="text-lg font-medium tracking-tight text-luxury-ink">nextbench</span>
         </Link>
 
         {/* Desktop Links */}
@@ -119,7 +117,7 @@ export default function Navbar() {
                 to="/signup" 
                 className="bg-brand-pink text-white px-8 py-3 rounded-sm text-[13px] font-bold uppercase tracking-widest hover:bg-brand-teal transition-all luxury-shadow active:scale-95"
               >
-                Become Verified
+                Sign Up
               </Link>
             </>
           ) : (
@@ -128,6 +126,14 @@ export default function Navbar() {
                 <Heart size={20} className={`transition-colors ${location.pathname === '/wishlist' ? 'text-brand-pink fill-brand-pink' : 'text-brand-teal/50 group-hover:text-brand-pink'}`} />
               </Link>
               <NotificationBell />
+              {!userData?.verified && (
+                <Link
+                  to="/verification"
+                  className="bg-brand-pink text-white px-5 py-2.5 rounded-sm text-[11px] font-bold uppercase tracking-widest hover:bg-brand-teal transition-all shadow shadow-brand-pink/10 flex items-center gap-1.5"
+                >
+                  <ShieldCheck size={13} /> Become Verified
+                </Link>
+              )}
               <Link to="/profile" className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-brand-teal/50 hover:text-brand-pink transition-colors">
                 {userData?.verified && <ShieldCheck size={16} className="text-brand-mint" />}
                 <span className="max-w-[120px] truncate">{userData?.name || user.email}</span>
@@ -236,7 +242,7 @@ export default function Navbar() {
                     onClick={() => setIsMobileMenuOpen(false)}
                     className="bg-brand-pink text-white px-6 py-3 rounded-xl text-center font-medium"
                   >
-                    Become Verified
+                    Sign Up
                   </Link>
                 </>
               ) : (
@@ -248,6 +254,15 @@ export default function Navbar() {
                   >
                     My Profile
                   </Link>
+                  {!userData?.verified && (
+                    <Link 
+                      to="/verification" 
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="bg-brand-pink text-white px-6 py-3 rounded-xl text-center font-bold text-sm flex items-center gap-2 justify-center"
+                    >
+                      <ShieldCheck size={16} /> Become Verified
+                    </Link>
+                  )}
                   {userData?.isAdmin && (
                     <Link 
                       to="/admin" 

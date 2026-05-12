@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, SlidersHorizontal, CheckCircle, Heart, X, Tag } from 'lucide-react';
+import { Search, SlidersHorizontal, CheckCircle, Heart, X, Tag, ShieldAlert, UserPlus } from 'lucide-react';
 import { categories } from '../../mockData';
 import { Link } from 'react-router-dom';
 import { collection, onSnapshot, query, where, addDoc, deleteDoc, doc, getDocs, serverTimestamp } from 'firebase/firestore';
@@ -36,7 +36,7 @@ export default function Marketplace() {
   const [loading, setLoading] = useState(true);
   const [wishlisted, setWishlisted] = useState<Set<string>>(new Set());
   const [wishlistMap, setWishlistMap] = useState<Record<string, string>>({}); // productId -> wishlistDocId
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const { showToast } = useToast();
 
   // Advanced filters
@@ -147,6 +147,11 @@ export default function Marketplace() {
       return matchesCategory && matchesSearch && matchesCondition && matchesMinPrice && matchesMaxPrice && matchesSchool;
     })
     .sort((a, b) => {
+      // Always push sold items to the very end
+      const aSold = a.status === 'sold' ? 1 : 0;
+      const bSold = b.status === 'sold' ? 1 : 0;
+      if (aSold !== bSold) return aSold - bSold;
+
       if (sortBy === 'price_asc') return a.price - b.price;
       if (sortBy === 'price_desc') return b.price - a.price;
       return 0; // newest - rely on Firestore order
@@ -166,7 +171,7 @@ export default function Marketplace() {
     <div className="pt-32 pb-20 px-6 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-8">
         <div>
-          <h1 className="text-5xl font-serif font-bold text-luxury-ink mb-4 italic">NextBench <span className="not-italic">Selection</span></h1>
+          <h1 className="text-5xl font-serif font-bold text-luxury-ink mb-4 italic">Nextbench <span className="not-italic">Selection</span></h1>
           <p className="text-luxury-ink/50 font-medium">Curated student-to-student marketplace.</p>
         </div>
         
@@ -286,6 +291,49 @@ export default function Marketplace() {
           </button>
         ))}
       </div>
+
+      {/* Auth-state banners */}
+      {!user && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8 flex flex-col sm:flex-row items-center gap-4 p-5 bg-brand-teal rounded-2xl shadow-lg shadow-brand-teal/10"
+        >
+          <div className="flex items-center gap-3 flex-1">
+            <UserPlus size={20} className="text-white shrink-0" />
+            <p className="text-white text-sm font-medium">
+              <span className="font-bold">Join Nextbench</span> — Create a verified account to message sellers, save items, and list your own.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <Link to="/login" className="text-white/70 text-[11px] font-bold uppercase tracking-widest hover:text-white transition-colors">Log In</Link>
+            <Link to="/signup" className="bg-white text-brand-teal px-5 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest hover:bg-brand-mint transition-colors shadow">
+              Sign Up Free
+            </Link>
+          </div>
+        </motion.div>
+      )}
+
+      {user && !userData?.verified && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8 flex flex-col sm:flex-row items-center gap-4 p-5 bg-brand-pink/5 border border-brand-pink/20 rounded-2xl"
+        >
+          <div className="flex items-center gap-3 flex-1">
+            <ShieldAlert size={20} className="text-brand-pink shrink-0" />
+            <p className="text-luxury-ink text-sm font-medium">
+              <span className="font-bold text-brand-pink">Verification pending</span> — Complete your student ID verification to sell items and message other students.
+            </p>
+          </div>
+          <Link
+            to="/verification"
+            className="shrink-0 bg-brand-pink text-white px-5 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest hover:bg-brand-teal transition-colors shadow shadow-brand-pink/10"
+          >
+            Become Verified
+          </Link>
+        </motion.div>
+      )}
 
       {/* Results count */}
       {!loading && (

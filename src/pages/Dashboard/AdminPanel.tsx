@@ -10,7 +10,7 @@ import { useToast } from '../../lib/ToastContext';
 import { createNotification } from '../../lib/notifications';
 
 interface PendingUser { id: string; name: string; school: string; email: string; verified: boolean; isAdmin: boolean; reputation: number; idCardUrl?: string; selfieUrl?: string; }
-interface PendingProduct { id: string; title: string; category: string; price: number; sellerName: string; image: string; description: string; }
+interface PendingProduct { id: string; title: string; category: string; price: number; sellerName: string; sellerId: string; image: string; description: string; }
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('Verifications');
@@ -77,7 +77,7 @@ export default function AdminPanel() {
       await updateDoc(doc(db, 'users', userId), { verified: true, verificationStatus: 'approved', updatedAt: serverTimestamp() });
       setPendingVerifications(prev => prev.filter(u => u.id !== userId));
       showToast(`${userName} has been verified`, 'success');
-      createNotification({ userId, type: 'user_approved', title: 'Welcome to NextBench!', message: 'Your account has been verified. You can now list and reserve items.', link: '/marketplace' });
+      createNotification({ userId, type: 'user_approved', title: 'Welcome to Nextbench!', message: 'Your account has been verified. You can now list and reserve items.', link: '/marketplace' });
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`); }
   };
 
@@ -88,8 +88,8 @@ export default function AdminPanel() {
       showToast('User application rejected', 'info');
 
       // Open email client
-      const subject = encodeURIComponent("NextBench Application Rejected");
-      const body = encodeURIComponent(`Hi ${userName},\n\nUnfortunately, your application to NextBench has been rejected because your ID card photo was unclear or invalid.\n\nPlease log in to NextBench again and re-upload a clear photo of your official school ID to be verified.\n\nThanks,\nThe NextBench Team`);
+      const subject = encodeURIComponent("Nextbench Application Rejected");
+      const body = encodeURIComponent(`Hi ${userName},\n\nUnfortunately, your application to Nextbench has been rejected because your ID card photo was unclear or invalid.\n\nPlease log in to Nextbench again and re-upload a clear photo of your official school ID to be verified.\n\nThanks,\nThe Nextbench Team`);
       window.location.href = `mailto:${userEmail}?subject=${subject}&body=${body}`;
     } catch (err) { handleFirestoreError(err, OperationType.DELETE, `users/${userId}`); }
   };
@@ -139,7 +139,7 @@ export default function AdminPanel() {
             <ShieldCheck className="text-brand-teal" size={14} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-brand-teal">Administrative Control</span>
           </div>
-          <h1 className="text-5xl font-serif font-bold text-luxury-ink mb-2 italic">NextBench <span className="not-italic">Operations.</span></h1>
+          <h1 className="text-5xl font-serif font-bold text-luxury-ink mb-2 italic">Nextbench <span className="not-italic">Operations.</span></h1>
           <p className="text-luxury-ink/40 font-medium">Manage verification, trust, and ecosystem safety.</p>
         </div>
       </div>
@@ -179,11 +179,11 @@ export default function AdminPanel() {
           {pendingVerifications.map(item => (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={item.id}
               className="bg-white rounded-2xl p-6 luxury-shadow border border-luxury-ink/5 flex flex-col md:flex-row items-center gap-6">
-              <div className="w-14 h-14 rounded-xl bg-brand-teal/10 flex items-center justify-center text-xl font-serif font-bold text-brand-teal shrink-0">
+              <Link to={`/profile/${item.id}`} className="w-14 h-14 rounded-xl bg-brand-teal/10 flex items-center justify-center text-xl font-serif font-bold text-brand-teal shrink-0 hover:bg-brand-teal/20 transition-colors">
                 {item.name?.[0]?.toUpperCase() || 'U'}
-              </div>
+              </Link>
               <div className="flex-1 text-center md:text-left">
-                <h3 className="text-base font-bold text-luxury-ink mb-1">{item.name}</h3>
+                <Link to={`/profile/${item.id}`} className="text-base font-bold text-luxury-ink mb-1 hover:text-brand-teal transition-colors block">{item.name}</Link>
                 <p className="text-xs font-medium text-luxury-ink/40">{item.school} • {item.email}</p>
               </div>
               <div className="flex items-center gap-2">
@@ -218,7 +218,10 @@ export default function AdminPanel() {
               </div>
               <div className="flex-1 text-center md:text-left">
                 <h3 className="text-base font-bold text-luxury-ink mb-1">{item.title}</h3>
-                <p className="text-xs font-medium text-luxury-ink/40 mb-2">{item.category} • {item.sellerName}</p>
+                <div className="flex items-center justify-center md:justify-start gap-1 mb-2">
+                  <span className="text-xs font-medium text-luxury-ink/40">{item.category} •</span>
+                  <Link to={`/profile/${item.sellerId}`} className="text-xs font-medium text-brand-teal hover:underline">{item.sellerName}</Link>
+                </div>
                 <span className="px-3 py-1 bg-brand-teal/5 rounded-full text-[10px] font-bold text-brand-teal uppercase tracking-widest border border-brand-teal/10">₹{item.price}</span>
               </div>
               <div className="flex items-center gap-2">
