@@ -41,6 +41,11 @@ export default function App() {
               <Profile />
             </ProtectedRoute>
           } />
+          <Route path="/profile/:userId" element={
+            <ProtectedRoute requireAuth>
+              <Profile />
+            </ProtectedRoute>
+          } />
           <Route path="/messages" element={
             <ProtectedRoute requireAuth>
               <ChatList />

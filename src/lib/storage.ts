@@ -48,3 +48,11 @@ export async function uploadProductImage(file: File, userId: string): Promise<st
 export async function uploadProfilePicture(file: File, userId: string): Promise<string> {
   return uploadToCloudinary(file, `nextbench/profiles/${userId}`);
 }
+
+/**
+ * Uploads an image to be sent in a chat message.
+ */
+export async function uploadChatImage(file: File, roomId: string): Promise<string> {
+  return uploadToCloudinary(file, `nextbench/chats/${roomId}`);
+}
+

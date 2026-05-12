@@ -306,18 +306,18 @@ export default function ProductDetail() {
           {/* Seller Card */}
           <div className="mt-auto pt-8 border-t border-luxury-ink/5">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 mb-4">Listed by Verified Student</h4>
-            <div className="flex items-center gap-5">
+            <Link to={`/profile/${product.sellerId}`} className="flex items-center gap-5 group hover:bg-brand-teal/5 p-3 -ml-3 rounded-2xl transition-colors">
               <div className="w-14 h-14 rounded-full bg-brand-teal/10 flex items-center justify-center text-xl font-serif font-bold text-brand-teal shrink-0">
                 {product.sellerName?.[0]?.toUpperCase() || 'U'}
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <p className="text-lg font-bold text-luxury-ink">{product.sellerName}</p>
+                  <p className="text-lg font-bold text-luxury-ink group-hover:text-brand-teal transition-colors">{product.sellerName}</p>
                   <ShieldCheck size={14} className="text-brand-teal" />
                 </div>
                 <p className="text-sm text-luxury-ink/50 font-medium">{product.sellerSchool}</p>
               </div>
-            </div>
+            </Link>
           </div>
         </motion.div>
       </div>
