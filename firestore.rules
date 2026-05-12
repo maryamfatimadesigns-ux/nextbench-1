@@ -138,6 +138,13 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'createdAt'])
+        && (data.keys().hasAny(['text', 'image']))
+        && (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 2000))
+        && (!data.keys().hasAny(['image']) || (data.image is string && data.image.size() <= 2000));
+    }
+
     match /chatRooms/{roomId} {
       // get: only participants can fetch a specific chat room by ID
       allow get: if isSignedIn() && request.auth.uid in resource.data.participants;
@@ -163,9 +170,11 @@ service cloud.firestore {
           && isValidId(messageId)
           && request.auth.uid == incoming().senderId
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          && isValidMessage(incoming())
           && incoming().createdAt == request.time;
       }
     }
+
 
     // === WISHLISTS ===
     match /wishlists/{wishlistId} {

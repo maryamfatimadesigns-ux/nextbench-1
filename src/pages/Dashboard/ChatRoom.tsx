@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Send, ArrowLeft, MoreVertical, ShieldCheck, User, Package, Phone, Flag } from 'lucide-react';
+import { Send, ArrowLeft, MoreVertical, ShieldCheck, User, Package, Phone, Flag, Camera, X, Image as ImageIcon } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useToast } from '../../lib/ToastContext';
+import { uploadChatImage } from '../../lib/storage';
 
 interface Message {
   id: string;
   senderId: string;
-  text: string;
+  text?: string;
+  image?: string;
   createdAt: any;
 }
 
@@ -38,6 +40,8 @@ export default function ChatRoom() {
   const [otherUser, setOtherUser] = useState<any>(null);
   const [showOptions, setShowOptions] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -79,25 +83,51 @@ export default function ChatRoom() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const sendMessage = async (text: string) => {
-    if (!text.trim() || !user || !roomId) return;
-    const messageText = text.trim();
+  const sendMessage = async (text?: string, image?: string) => {
+    if ((!text?.trim() && !image) || !user || !roomId) return;
+    
+    const messageText = text?.trim();
     setNewMessage('');
     setShowQuickReplies(false);
 
     try {
-      await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
+      const msgData: any = {
         senderId: user.uid,
-        text: messageText,
         createdAt: serverTimestamp()
-      });
+      };
+      if (messageText) msgData.text = messageText;
+      if (image) msgData.image = image;
+
+      await addDoc(collection(db, 'chatRooms', roomId, 'messages'), msgData);
+      
       await updateDoc(doc(db, 'chatRooms', roomId), {
-        lastMessage: messageText,
+        lastMessage: image ? '📷 Image' : messageText,
         lastSenderId: user.uid,
         updatedAt: serverTimestamp()
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `chatRooms/${roomId}/messages`);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0] || !roomId) return;
+    const file = e.target.files[0];
+    
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image must be less than 5MB', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const imageUrl = await uploadChatImage(file, roomId);
+      await sendMessage(undefined, imageUrl);
+    } catch (err) {
+      showToast('Failed to upload image', 'error');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -185,7 +215,18 @@ export default function ChatRoom() {
                   ? 'bg-luxury-ink text-white rounded-tr-sm' 
                   : 'bg-white text-luxury-ink rounded-tl-sm border border-luxury-ink/5'
               }`}>
-                {msg.text}
+                {msg.image && (
+                  <div className="mb-2 rounded-lg overflow-hidden border border-luxury-ink/5 bg-surface-base">
+                    <img 
+                      src={msg.image} 
+                      alt="Shared" 
+                      className="max-w-full max-h-[300px] object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => window.open(msg.image, '_blank')}
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
+                {msg.text && <p className="leading-relaxed">{msg.text}</p>}
                 <div className={`text-[10px] mt-1.5 opacity-30 ${isMe ? 'text-right' : 'text-left'}`}>
                   {msg.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...'}
                 </div>
@@ -213,19 +254,42 @@ export default function ChatRoom() {
       {/* Input */}
       <div className="p-4 md:p-6 bg-white border-t border-luxury-ink/5">
         <form onSubmit={handleSendMessage} className="relative flex items-center gap-2">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImageUpload} 
+            accept="image/*" 
+            className="hidden" 
+          />
+          <button 
+            type="button" 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="p-3.5 rounded-xl border border-luxury-ink/5 text-luxury-ink/20 hover:text-brand-pink transition-all shrink-0 disabled:opacity-50"
+            title="Send Image"
+          >
+            {isUploading ? (
+              <div className="w-5 h-5 border-2 border-brand-pink border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Camera size={20} />
+            )}
+          </button>
+          
           <button type="button" onClick={() => setShowQuickReplies(!showQuickReplies)}
-            className={`p-3 rounded-xl border transition-all shrink-0 ${showQuickReplies ? 'bg-brand-teal text-white border-brand-teal' : 'border-luxury-ink/5 text-luxury-ink/20 hover:text-brand-teal'}`}
+            className={`p-3.5 rounded-xl border transition-all shrink-0 ${showQuickReplies ? 'bg-brand-teal text-white border-brand-teal' : 'border-luxury-ink/5 text-luxury-ink/20 hover:text-brand-teal'}`}
             title="Quick replies">
             ⚡
           </button>
+          
           <input
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Type your message..."
+            placeholder={isUploading ? "Uploading image..." : "Type your message..."}
+            disabled={isUploading}
             className="flex-1 bg-surface-base border border-luxury-ink/5 rounded-2xl py-4 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
           />
-          <button type="submit" disabled={!newMessage.trim()}
+          <button type="submit" disabled={!newMessage.trim() || isUploading}
             className="p-3.5 bg-luxury-ink text-white rounded-xl hover:bg-brand-teal transition-all shadow-lg disabled:opacity-30 disabled:cursor-not-allowed shrink-0">
             <Send size={18} />
           </button>
