@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 import { ShieldCheck, XCircle, AlertTriangle, Filter, CheckCircle, Trash2, Ban, ChevronRight, Users, Package, Crown, Eye, RefreshCw, IdCard, Camera } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { collection, query, where, getDocs, updateDoc, doc, deleteDoc, serverTimestamp, onSnapshot, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
@@ -235,12 +236,12 @@ export default function AdminPanel() {
           <h2 className="text-lg font-serif font-bold text-luxury-ink italic mb-4">All Users <span className="not-italic text-luxury-ink/30">({allUsers.length})</span></h2>
           {allUsers.map(u => (
             <div key={u.id} className="bg-white rounded-2xl p-5 luxury-shadow border border-luxury-ink/5 flex flex-col md:flex-row items-center gap-5">
-              <div className="w-12 h-12 rounded-xl bg-brand-teal/10 flex items-center justify-center text-lg font-serif font-bold text-brand-teal shrink-0">
+              <Link to={`/profile/${u.id}`} className="w-12 h-12 rounded-xl bg-brand-teal/10 flex items-center justify-center text-lg font-serif font-bold text-brand-teal shrink-0 hover:bg-brand-teal/20 transition-colors">
                 {u.name?.[0]?.toUpperCase() || 'U'}
-              </div>
+              </Link>
               <div className="flex-1 text-center md:text-left">
                 <div className="flex items-center gap-2 mb-0.5 justify-center md:justify-start">
-                  <h3 className="font-bold text-luxury-ink text-sm">{u.name}</h3>
+                  <Link to={`/profile/${u.id}`} className="font-bold text-luxury-ink text-sm hover:text-brand-teal transition-colors">{u.name}</Link>
                   {u.verified && <ShieldCheck size={14} className="text-brand-teal" />}
                   {u.isAdmin && <Crown size={14} className="text-brand-pink" />}
                 </div>

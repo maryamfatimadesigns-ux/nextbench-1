@@ -106,6 +106,8 @@ export default function Profile() {
     
     setIsUploadingPic(true);
     try {
+      await user.getIdToken(true); // Force refresh token
+      
       const imageUrl = await uploadProfilePicture(file, user.uid);
       await updateDoc(doc(db, 'users', user.uid), {
         profilePicture: imageUrl,
