@@ -57,7 +57,7 @@ export default function ChatRoom() {
           const otherUserId = data.participants.find(id => id !== user.uid);
           if (otherUserId) {
             const userDoc = await getDoc(doc(db, 'users', otherUserId));
-            if (userDoc.exists()) setOtherUser(userDoc.data());
+            if (userDoc.exists()) setOtherUser({ id: otherUserId, ...userDoc.data() });
           }
         }
       } catch (err) {
@@ -151,19 +151,19 @@ export default function ChatRoom() {
           <button onClick={() => navigate('/messages')} className="p-2 hover:bg-surface-soft rounded-full transition-all">
             <ArrowLeft size={20} className="text-luxury-ink" />
           </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-brand-teal/5 flex items-center justify-center overflow-hidden border border-luxury-ink/5">
+          <div className="flex items-center gap-3 p-2 -ml-2 rounded-xl transition-colors">
+            <Link to={`/profile/${otherUser.id}`} className="w-10 h-10 rounded-xl bg-brand-teal/5 flex items-center justify-center overflow-hidden border border-luxury-ink/5 shrink-0 hover:opacity-80 transition-opacity">
               {otherUser.profilePicture ? (
                 <img src={otherUser.profilePicture} alt={otherUser.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <User size={20} className="text-brand-teal" />
               )}
-            </div>
+            </Link>
             <div>
-              <h3 className="font-bold text-luxury-ink flex items-center gap-1.5 leading-none mb-0.5 text-sm">
+              <Link to={`/profile/${otherUser.id}`} className="font-bold text-luxury-ink flex items-center gap-1.5 leading-none mb-0.5 text-sm hover:text-brand-teal transition-colors">
                 {otherUser.name}
                 {otherUser.verified && <ShieldCheck size={14} className="text-brand-teal" />}
-              </h3>
+              </Link>
               {roomData?.productTitle && (
                 <Link to={`/product/${roomData.productId}`} className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 hover:text-brand-pink transition-colors flex items-center gap-1">
                   <Package size={10} /> {roomData.productTitle}
