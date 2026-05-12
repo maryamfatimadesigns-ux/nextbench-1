@@ -36,7 +36,7 @@ export default function Marketplace() {
   const [loading, setLoading] = useState(true);
   const [wishlisted, setWishlisted] = useState<Set<string>>(new Set());
   const [wishlistMap, setWishlistMap] = useState<Record<string, string>>({}); // productId -> wishlistDocId
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const { showToast } = useToast();
 
   // Advanced filters

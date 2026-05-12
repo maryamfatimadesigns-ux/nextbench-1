@@ -48,6 +48,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-6 md:px-12 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 group">
           <img src="/logo.png" alt="Nextbench Logo" className="h-8 w-auto transition-transform group-hover:scale-105" />
+          <span className="text-lg font-medium tracking-tight text-luxury-ink">nextbench</span>
         </Link>
 
         {/* Desktop Links */}
@@ -116,7 +117,7 @@ export default function Navbar() {
                 to="/signup" 
                 className="bg-brand-pink text-white px-8 py-3 rounded-sm text-[13px] font-bold uppercase tracking-widest hover:bg-brand-teal transition-all luxury-shadow active:scale-95"
               >
-                Become Verified
+                Sign Up
               </Link>
             </>
           ) : (
@@ -241,7 +242,7 @@ export default function Navbar() {
                     onClick={() => setIsMobileMenuOpen(false)}
                     className="bg-brand-pink text-white px-6 py-3 rounded-xl text-center font-medium"
                   >
-                    Become Verified
+                    Sign Up
                   </Link>
                 </>
               ) : (

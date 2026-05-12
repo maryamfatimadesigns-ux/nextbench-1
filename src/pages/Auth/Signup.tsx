@@ -300,12 +300,12 @@ export default function Signup() {
           </p>
           <div className="grid grid-cols-2 gap-px bg-white/10">
             <div className="p-8 bg-brand-teal">
-              <p className="text-3xl font-light text-white mb-2">12k+</p>
-              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Members</p>
+              <p className="text-3xl font-light text-white mb-2">ID</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Verified</p>
             </div>
             <div className="p-8 bg-brand-teal">
               <p className="text-3xl font-light text-white mb-2">100%</p>
-              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Secure</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Trusted</p>
             </div>
           </div>
         </div>
