@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/layout/Navbar';
 import Footer from './components/layout/Footer';
 import LandingPage from './pages/LandingPage';
@@ -14,7 +14,26 @@ import ChatList from './pages/Dashboard/ChatList';
 import ChatRoom from './pages/Dashboard/ChatRoom';
 import Wishlist from './pages/Dashboard/Wishlist';
 import Notifications from './pages/Dashboard/Notifications';
+import TermsPage from './pages/Legal/TermsPage';
+import PrivacyPage from './pages/Legal/PrivacyPage';
 import ProtectedRoute from './components/ui/ProtectedRoute';
+import { useAuth } from './lib/AuthContext';
+
+/** Redirects already-authenticated users away from auth pages */
+function AuthRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user) return <Navigate to="/marketplace" replace />;
+  return <>{children}</>;
+}
+
+/** Redirects logged-in-but-unverified users to /verification, and not-logged-in to /signup */
+function VerificationGuard({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/signup" replace />;
+  return <>{children}</>;
+}
 
 export default function App() {
   return (
@@ -22,13 +41,20 @@ export default function App() {
       <Navbar />
       <main>
         <Routes>
+          {/* Public */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/product/:id" element={<ProductDetail />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/verification" element={<Verification />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/dashboard" element={<Marketplace />} />
+
+          {/* Auth pages — redirect logged-in users to marketplace */}
+          <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
+          <Route path="/signup" element={<AuthRoute><Signup /></AuthRoute>} />
+
+          {/* Verification — only for logged-in users; not-logged-in → /signup */}
+          <Route path="/verification" element={<VerificationGuard><Verification /></VerificationGuard>} />
 
           {/* Protected: Require auth */}
           <Route path="/sell" element={
@@ -73,6 +99,9 @@ export default function App() {
               <AdminPanel />
             </ProtectedRoute>
           } />
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       <Footer />

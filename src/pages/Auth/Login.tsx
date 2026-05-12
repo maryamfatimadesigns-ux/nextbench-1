@@ -1,5 +1,5 @@
-import { motion } from 'motion/react';
-import { ShieldCheck, Mail, Lock, ArrowRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { ShieldCheck, UserPlus } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import React, { useState } from 'react';
 import { auth, db } from '../../lib/firebase';
@@ -7,55 +7,53 @@ import { signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut } from
 import { doc, getDoc } from 'firebase/firestore';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [notFound, setNotFound] = useState(false); // true when account doesn't exist
   const navigate = useNavigate();
 
   const handleGoogleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotFound(false);
 
     const provider = new GoogleAuthProvider();
 
     try {
-      // Try popup first (works on desktop & most mobile browsers)
       let result;
       try {
         result = await signInWithPopup(auth, provider);
       } catch (popupErr: any) {
-        // If popup is blocked (in-app browsers like Instagram), fall back to redirect
         if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/cancelled-popup-request') {
           await signInWithRedirect(auth, provider);
           return;
         }
         throw popupErr;
       }
-      
+
       // Check if user exists in database
       const docRef = doc(db, 'users', result.user.uid);
       const docSnap = await getDoc(docRef);
-      
+
       if (!docSnap.exists()) {
+        // Sign them back out — they're not registered
         await signOut(auth);
-        setError("Account not found. Please sign up first.");
+        setNotFound(true);
         return;
       }
-      
+
       const data = docSnap.data();
       if (data.verificationStatus === 'rejected') {
         navigate('/verification?rejected=true');
         return;
       }
-      
-      // Verified users go straight to marketplace; others go to verification
+
       if (data.verified) {
         navigate('/marketplace');
       } else {
         navigate('/verification');
       }
     } catch (err: any) {
-      console.error("Login Error:", err);
+      console.error('Login Error:', err);
       setError(err.message || 'Failed to authenticate');
     }
   };
@@ -63,7 +61,7 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-surface-base flex items-center justify-center px-6 pt-20 pb-10">
       <div className="w-full max-w-sm">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-16"
@@ -79,24 +77,59 @@ export default function Login() {
           </p>
         </motion.div>
 
+        {/* Error banner */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 text-red-600 text-xs font-bold uppercase tracking-widest text-center border border-red-100 rounded-sm">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 bg-red-50 text-red-600 text-xs font-bold uppercase tracking-widest text-center border border-red-100 rounded-sm"
+          >
             {error}
-          </div>
+          </motion.div>
         )}
 
+        {/* "Account not found" — guide them to sign up */}
+        <AnimatePresence>
+          {notFound && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              className="mb-8 p-6 bg-brand-pink/5 border border-brand-pink/20 rounded-2xl text-center"
+            >
+              <div className="w-12 h-12 bg-brand-pink/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <UserPlus size={22} className="text-brand-pink" />
+              </div>
+              <h3 className="text-sm font-bold text-luxury-ink mb-2">No account found</h3>
+              <p className="text-xs text-luxury-ink/50 leading-relaxed mb-5">
+                It looks like you haven't signed up yet. Create your verified student account to access the marketplace.
+              </p>
+              <Link
+                to="/signup"
+                className="inline-block w-full py-4 bg-brand-pink text-white text-[11px] font-bold uppercase tracking-[0.2em] rounded-xl hover:bg-brand-teal transition-colors shadow-lg shadow-brand-pink/10"
+              >
+                Create Account →
+              </Link>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <form onSubmit={handleGoogleLogin} className="space-y-6">
-          <button 
+          <button
             type="submit"
             className="w-full bg-luxury-ink text-white py-5 rounded-sm font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-luxury-ink/10 hover:bg-brand-teal transition-all active:scale-[0.98] flex items-center justify-center gap-3 group"
           >
+            <ShieldCheck size={16} className="opacity-60 group-hover:opacity-100 transition-opacity" />
             Authenticate Identity with Google
           </button>
         </form>
 
         <div className="mt-16 pt-10 border-t border-brand-teal/5">
           <p className="text-center text-[11px] font-bold uppercase tracking-widest text-brand-teal/40">
-            Unverified? <Link to="/signup" className="text-brand-pink hover:text-brand-teal transition-colors">Submit Application</Link>
+            New to Nextbench?{' '}
+            <Link to="/signup" className="text-brand-pink hover:text-brand-teal transition-colors">
+              Create Account
+            </Link>
           </p>
         </div>
       </div>

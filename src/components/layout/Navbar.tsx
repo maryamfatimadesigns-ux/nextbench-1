@@ -125,6 +125,14 @@ export default function Navbar() {
                 <Heart size={20} className={`transition-colors ${location.pathname === '/wishlist' ? 'text-brand-pink fill-brand-pink' : 'text-brand-teal/50 group-hover:text-brand-pink'}`} />
               </Link>
               <NotificationBell />
+              {!userData?.verified && (
+                <Link
+                  to="/verification"
+                  className="bg-brand-pink text-white px-5 py-2.5 rounded-sm text-[11px] font-bold uppercase tracking-widest hover:bg-brand-teal transition-all shadow shadow-brand-pink/10 flex items-center gap-1.5"
+                >
+                  <ShieldCheck size={13} /> Become Verified
+                </Link>
+              )}
               <Link to="/profile" className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-brand-teal/50 hover:text-brand-pink transition-colors">
                 {userData?.verified && <ShieldCheck size={16} className="text-brand-mint" />}
                 <span className="max-w-[120px] truncate">{userData?.name || user.email}</span>
@@ -245,6 +253,15 @@ export default function Navbar() {
                   >
                     My Profile
                   </Link>
+                  {!userData?.verified && (
+                    <Link 
+                      to="/verification" 
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="bg-brand-pink text-white px-6 py-3 rounded-xl text-center font-bold text-sm flex items-center gap-2 justify-center"
+                    >
+                      <ShieldCheck size={16} /> Become Verified
+                    </Link>
+                  )}
                   {userData?.isAdmin && (
                     <Link 
                       to="/admin" 
