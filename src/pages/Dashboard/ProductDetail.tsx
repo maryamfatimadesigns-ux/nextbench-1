@@ -1,6 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import SEO from '../../components/seo/SEO';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, ChevronLeft, Star, MessageSquare, Heart, Share2, X, Send } from 'lucide-react';
+import { ShieldCheck, ChevronLeft, ChevronRight, Star, MessageSquare, Heart, Share2, X, Send, MapPin } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -8,6 +9,8 @@ import { handleFirestoreError, OperationType } from '../../lib/firestore-errors'
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { createNotification } from '../../lib/notifications';
+import { getOptimizedImageUrl } from '../../lib/utils';
+import { useScrollLock } from '../../hooks/useScrollLock';
 
 interface ProductData {
   id: string;
@@ -16,6 +19,7 @@ interface ProductData {
   category: string;
   condition: string;
   image: string;
+  images?: string[];
   description: string;
   meetupAvailable: boolean;
   deliveryAvailable: boolean;
@@ -41,6 +45,7 @@ export default function ProductDetail() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [product, setProduct] = useState<ProductData | null>(null);
+  const [activeImgIdx, setActiveImgIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [isReserving, setIsReserving] = useState(false);
   const [isStartingChat, setIsStartingChat] = useState(false);
@@ -53,6 +58,8 @@ export default function ProductDetail() {
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
+
+  useScrollLock(showReviewModal);
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -209,27 +216,94 @@ export default function ProductDetail() {
   const isSold = product.status === 'sold';
   const canReserve = !isSeller && product.status === 'available';
   const avgRating = reviews.length > 0 ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1) : null;
+  const productImages = (product.images && product.images.length > 0 ? product.images : [product.image])
+    .map(img => getOptimizedImageUrl(img));
 
   return (
     <div className="pt-32 pb-20 px-6 max-w-7xl mx-auto">
-      <Link to="/marketplace" className="inline-flex items-center gap-2 text-luxury-ink/40 hover:text-luxury-ink transition-colors mb-12 text-sm font-medium">
+      <SEO 
+        title={`${product.title} - ₹${product.price}`}
+        description={product.description.slice(0, 150) + (product.description.length > 150 ? '...' : '')}
+        image={getOptimizedImageUrl(product.image)}
+      />
+      
+      <Link to="/dashboard" className="inline-flex items-center gap-2 text-luxury-ink/40 hover:text-luxury-ink transition-colors mb-12 text-sm font-medium">
         <ChevronLeft size={16} /> Back to Marketplace
       </Link>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
-        {/* Left: Image */}
+        {/* Left: Image Carousel & Thumbnails */}
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-          <div className="aspect-square bg-white shadow-[0_40px_100px_-20px_rgba(58,139,149,0.15)] border border-brand-teal/5 p-4 relative rounded-2xl overflow-hidden">
+          <div className="aspect-square bg-surface-card shadow-[0_40px_100px_-20px_rgba(58,139,149,0.15)] border border-brand-teal/5 p-4 relative rounded-2xl overflow-hidden group">
             {isSold && (
               <div className="absolute inset-0 bg-luxury-ink/40 backdrop-blur-sm z-10 flex items-center justify-center rounded-2xl">
-                <span className="bg-white text-luxury-ink px-6 py-3 rounded-full font-bold text-sm uppercase tracking-widest">Sold</span>
+                <span className="bg-surface-card text-luxury-ink px-6 py-3 rounded-full font-bold text-sm uppercase tracking-widest">Sold</span>
               </div>
             )}
             {isReserved && (
               <div className="absolute top-6 right-6 bg-amber-500 text-white px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest z-10 shadow-lg">Reserved</div>
             )}
-            <img src={product.image} alt={product.title} className="w-full h-full object-cover rounded-xl" referrerPolicy="no-referrer" />
+            
+            <div className="w-full h-full relative overflow-hidden rounded-xl bg-luxury-ink/5">
+              <AnimatePresence mode="wait">
+                <motion.img
+                  key={activeImgIdx}
+                  src={productImages[activeImgIdx]}
+                  alt={`${product.title} - Image ${activeImgIdx + 1}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="w-full h-full object-cover rounded-xl"
+                  referrerPolicy="no-referrer"
+                />
+              </AnimatePresence>
+
+              {productImages.length > 1 && (
+                <>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveImgIdx((prev) => (prev === 0 ? productImages.length - 1 : prev - 1));
+                    }}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 p-2 bg-white/80 hover:bg-surface-card backdrop-blur-sm rounded-full shadow-lg border border-brand-teal/5 hover:scale-110 active:scale-95 text-luxury-ink/60 hover:text-brand-teal transition-all md:opacity-0 md:group-hover:opacity-100 duration-300"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveImgIdx((prev) => (prev === productImages.length - 1 ? 0 : prev + 1));
+                    }}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-2 bg-white/80 hover:bg-surface-card backdrop-blur-sm rounded-full shadow-lg border border-brand-teal/5 hover:scale-110 active:scale-95 text-luxury-ink/60 hover:text-brand-teal transition-all md:opacity-0 md:group-hover:opacity-100 duration-300"
+                    aria-label="Next image"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
+
+          {/* Miniature thumbnail strip */}
+          {productImages.length > 1 && (
+            <div className="flex gap-3 justify-center overflow-x-auto py-2">
+              {productImages.map((img, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setActiveImgIdx(idx)}
+                  className={`relative w-20 aspect-[4/3] rounded-xl overflow-hidden border-2 bg-luxury-ink/5 transition-all duration-300 hover:scale-105 ${
+                    idx === activeImgIdx
+                      ? 'border-brand-teal scale-105 shadow-md shadow-brand-teal/20'
+                      : 'border-transparent opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  <img src={img} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </button>
+              ))}
+            </div>
+          )}
         </motion.div>
 
         {/* Right: Details */}
@@ -259,11 +333,11 @@ export default function ProductDetail() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 mb-8">
-              <div className="p-4 bg-white border border-brand-teal/5 shadow-sm rounded-xl">
+              <div className="p-4 bg-surface-card border border-brand-teal/5 shadow-sm rounded-xl">
                 <div className="text-[9px] uppercase tracking-widest font-bold text-brand-teal/60 mb-1">Meetup</div>
                 <div className="text-xs font-bold text-luxury-ink">{product.meetupAvailable ? 'Campus Specified' : 'Unavailable'}</div>
               </div>
-              <div className="p-4 bg-white border border-brand-teal/5 shadow-sm rounded-xl">
+              <div className="p-4 bg-surface-card border border-brand-teal/5 shadow-sm rounded-xl">
                 <div className="text-[9px] uppercase tracking-widest font-bold text-brand-teal/60 mb-1">Service</div>
                 <div className="text-xs font-bold text-luxury-ink">{product.deliveryAvailable ? 'Porter Supported' : 'Meetup Only'}</div>
               </div>
@@ -315,7 +389,10 @@ export default function ProductDetail() {
                   <p className="text-lg font-bold text-luxury-ink group-hover:text-brand-teal transition-colors">{product.sellerName}</p>
                   <ShieldCheck size={14} className="text-brand-teal" />
                 </div>
-                <p className="text-sm text-luxury-ink/50 font-medium">{product.sellerSchool}</p>
+                <p className="text-sm text-luxury-ink/50 font-medium flex items-center gap-1 mt-1">
+                  {product.sellerSchool} 
+                  {product.city && <><span className="text-luxury-ink/30 mx-1">•</span> <MapPin size={12} className="text-brand-teal/70" /> {product.city}</>}
+                </p>
               </div>
             </Link>
           </div>
@@ -328,7 +405,7 @@ export default function ProductDetail() {
           <h2 className="text-2xl font-serif font-bold text-luxury-ink mb-8 italic">Reviews <span className="not-italic text-luxury-ink/30 text-lg">({reviews.length})</span></h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {reviews.map(r => (
-              <div key={r.id} className="bg-white rounded-2xl p-6 luxury-shadow border border-luxury-ink/5">
+              <div key={r.id} className="bg-surface-card rounded-2xl p-6 luxury-shadow border border-luxury-ink/5">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-full bg-brand-teal/10 flex items-center justify-center text-sm font-serif font-bold text-brand-teal">
                     {r.reviewerName?.[0]?.toUpperCase()}
@@ -351,7 +428,7 @@ export default function ProductDetail() {
       <AnimatePresence>
         {showReviewModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="bg-white rounded-2xl w-full max-w-md p-8 relative shadow-2xl border border-luxury-ink/5">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="bg-surface-card rounded-2xl w-full max-w-md p-8 relative shadow-2xl border border-luxury-ink/5">
               <button onClick={() => setShowReviewModal(false)} className="absolute top-4 right-4 p-2 text-luxury-ink/40 hover:text-luxury-ink"><X size={20} /></button>
               <h3 className="text-xl font-bold text-luxury-ink mb-2">Rate this Transaction</h3>
               <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/40 mb-6">How was your experience?</p>

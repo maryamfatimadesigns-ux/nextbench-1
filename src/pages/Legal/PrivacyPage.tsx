@@ -263,7 +263,7 @@ export default function PrivacyPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.06 * i }}
-              className="bg-white rounded-2xl p-8 border border-luxury-ink/5 shadow-sm"
+              className="bg-surface-card rounded-2xl p-8 border border-luxury-ink/5 shadow-sm"
             >
               <h2 className="text-lg font-bold text-luxury-ink mb-5 pb-4 border-b border-luxury-ink/5">
                 {section.title}
@@ -303,7 +303,7 @@ export default function PrivacyPage() {
           </p>
           <a
             href="mailto:nextbench@loreto.edu"
-            className="inline-flex items-center gap-2 bg-luxury-ink text-white px-8 py-3 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-brand-teal transition-colors"
+            className="inline-flex items-center gap-2 bg-luxury-ink text-surface-base px-8 py-3 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-brand-teal transition-colors"
           >
             Contact Privacy Team
           </a>

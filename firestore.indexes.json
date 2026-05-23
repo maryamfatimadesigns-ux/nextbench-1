@@ -10,10 +10,37 @@
       ]
     },
     {
+      "collectionGroup": "chatRooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "follows",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "followerId", "order": "ASCENDING" },
+        { "fieldPath": "followingId", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "follows",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "followingId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" },
         { "fieldPath": "__name__", "order": "DESCENDING" }
       ]

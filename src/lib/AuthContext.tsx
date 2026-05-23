@@ -16,6 +16,8 @@ export interface UserData {
   idCardUrl?: string | null;
   selfieUrl?: string | null;
   about?: string | null;
+  username?: string | null;
+  city?: string;
   createdAt: string;
   updatedAt: string;
 }

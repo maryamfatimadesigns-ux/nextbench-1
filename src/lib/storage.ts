@@ -56,3 +56,19 @@ export async function uploadChatImage(file: File, roomId: string): Promise<strin
   return uploadToCloudinary(file, `nextbench/chats/${roomId}`);
 }
 
+/**
+ * Uploads an ID card for a school addition request.
+ */
+export async function uploadSchoolIdCard(file: File): Promise<string> {
+  const randomId = Math.random().toString(36).substring(2, 15);
+  return uploadToCloudinary(file, `nextbench/school_requests/${randomId}`);
+}
+
+/**
+ * Uploads an image for a community post.
+ */
+export async function uploadPostImage(file: File): Promise<string> {
+  const randomId = Math.random().toString(36).substring(2, 15);
+  return uploadToCloudinary(file, `nextbench/posts/${randomId}`);
+}
+

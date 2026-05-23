@@ -4,8 +4,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../lib/firebase';
 import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, collection, getDocs, addDoc } from 'firebase/firestore';
 import { useAuth } from '../../lib/AuthContext';
+import { uploadSchoolIdCard } from '../../lib/storage';
 
 const SCHOOLS = [
   "Loreto Convent",
@@ -21,26 +22,44 @@ const SCHOOLS = [
 function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [result, setResult] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [idCardFile, setIdCardFile] = useState<File | null>(null);
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!idCardFile) {
+      setResult("Please upload an ID card.");
+      return;
+    }
+
     setIsSubmitting(true);
     setResult("");
     
     const formData = new FormData(event.currentTarget);
-    formData.append("access_key", "6b3dde00-b0c3-47b9-9721-8cc626fa1a77");
+    const schoolName = formData.get("schoolName") as string;
+    const city = formData.get("city") as string;
+    const website = formData.get("website") as string;
+    const requesterName = formData.get("requesterName") as string;
+    const requesterEmail = formData.get("requesterEmail") as string;
 
     try {
-      const response = await fetch("https://api.web3forms.com/submit", {
-        method: "POST",
-        body: formData
+      const idCardUrl = await uploadSchoolIdCard(idCardFile);
+      
+      await addDoc(collection(db, 'school_requests'), {
+        schoolName,
+        city,
+        website,
+        requesterName,
+        requesterEmail,
+        idCardUrl,
+        status: 'pending',
+        createdAt: serverTimestamp()
       });
 
-      const data = await response.json();
-      setResult(data.success ? "Success! We will review and add your school." : "Error submitting request.");
-      if (data.success) {
-        setTimeout(onClose, 2000);
-      }
+      setResult("Success! We will review and add your school.");
+      setTimeout(() => {
+        onClose();
+        setResult("");
+      }, 2000);
     } catch (error) {
       setResult("Network error. Please try again later.");
     } finally {
@@ -62,7 +81,7 @@ function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.95, opacity: 0 }}
-          className="bg-white rounded-2xl w-full max-w-md p-8 relative shadow-2xl border border-luxury-ink/5"
+          className="bg-surface-card rounded-2xl w-full max-w-md p-8 relative shadow-2xl border border-luxury-ink/5"
         >
           <button 
             onClick={onClose}
@@ -76,38 +95,68 @@ function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
             Tell us about your campus.
           </p>
 
-          <form onSubmit={onSubmit} className="space-y-6">
+          <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">Your Name</label>
               <input 
                 type="text" 
-                name="name" 
+                name="requesterName" 
                 required
-                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-4 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">School Email Address</label>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">Your Email</label>
               <input 
                 type="email" 
-                name="email" 
+                name="requesterEmail" 
                 required
-                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-4 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">Message (School Name & Website)</label>
-              <textarea 
-                name="message" 
+              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">School Name</label>
+              <input 
+                type="text" 
+                name="schoolName" 
                 required
-                rows={3}
-                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-4 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium resize-none"
-              ></textarea>
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">City</label>
+              <input 
+                type="text" 
+                name="city" 
+                required
+                placeholder="e.g., Lucknow"
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">School Website</label>
+              <input 
+                type="url" 
+                name="website" 
+                required
+                placeholder="https://"
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-brand-teal/40 ml-1">Student ID Card (Image)</label>
+              <input 
+                type="file" 
+                accept="image/*"
+                required
+                onChange={(e) => setIdCardFile(e.target.files?.[0] || null)}
+                className="w-full bg-surface-base border border-luxury-ink/5 rounded-sm py-3 px-6 focus:outline-none focus:border-brand-teal transition-all text-sm font-medium file:mr-4 file:py-2 file:px-4 file:rounded-sm file:border-0 file:text-xs file:font-bold file:bg-brand-teal/10 file:text-brand-teal hover:file:bg-brand-teal/20"
+              />
             </div>
             <button 
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-4 bg-brand-teal text-white text-[11px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-brand-teal/20 hover:bg-brand-pink transition-colors disabled:opacity-50"
+              className="w-full py-4 bg-brand-teal text-white text-[11px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-brand-teal/20 hover:bg-brand-pink transition-colors disabled:opacity-50 mt-4"
             >
               {isSubmitting ? "Submitting..." : "Submit Request"}
             </button>
@@ -125,6 +174,7 @@ function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 
 export default function Signup() {
   const [school, setSchool] = useState('');
+  const [schoolsList, setSchoolsList] = useState<{ name: string; city: string }[]>([]);
   const [error, setError] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -133,11 +183,33 @@ export default function Signup() {
   const navigate = useNavigate();
   const redirectedRef = useRef(false);
 
+  // Fetch schools
+  useEffect(() => {
+    const fetchSchools = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'schools'));
+        if (!snap.empty) {
+          const fetched = snap.docs.map(d => ({
+            name: d.data().name as string,
+            city: d.data().city as string || 'Lucknow'
+          }));
+          fetched.sort((a, b) => a.name.localeCompare(b.name));
+          setSchoolsList(fetched);
+        } else {
+          setSchoolsList(SCHOOLS.map(name => ({ name, city: 'Lucknow' })).sort((a, b) => a.name.localeCompare(b.name))); // fallback
+        }
+      } catch (err) {
+        setSchoolsList(SCHOOLS.map(name => ({ name, city: 'Lucknow' })).sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    };
+    fetchSchools();
+  }, []);
+
   // Redirect already-authenticated users (only on initial load, not during active sign-in)
   useEffect(() => {
     if (!loading && user && !isSigningIn && !redirectedRef.current) {
       redirectedRef.current = true;
-      navigate('/marketplace', { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [loading, user, isSigningIn, navigate]);
 
@@ -183,10 +255,14 @@ export default function Signup() {
       const docSnap = await getDoc(docRef);
       
       if (!docSnap.exists()) {
+        const selectedSchoolData = schoolsList.find(s => s.name === school);
+        const userCity = selectedSchoolData?.city || 'Lucknow';
+
         await setDoc(docRef, {
           name: user.displayName || 'Unknown Student',
           email: user.email || '',
           school: school,
+          city: userCity,
           verified: false,
           verificationStatus: 'pending',
           reputation: 5.0,
@@ -202,7 +278,7 @@ export default function Signup() {
       } else {
         const existingData = docSnap.data();
         if (existingData.verified) {
-          navigate('/marketplace');
+          navigate('/dashboard');
         } else {
           navigate('/verification');
         }
@@ -247,12 +323,12 @@ export default function Signup() {
               <select 
                 value={school}
                 onChange={(e) => setSchool(e.target.value)}
-                className="w-full bg-white border border-brand-teal/10 rounded-sm py-4 px-6 shadow-sm focus:outline-none focus:border-brand-pink transition-all text-sm font-medium appearance-none"
+                className="w-full bg-surface-card border border-brand-teal/10 rounded-sm py-4 px-6 shadow-sm focus:outline-none focus:border-brand-pink transition-all text-sm font-medium appearance-none"
                 required
               >
                 <option value="" disabled>Select Campus</option>
-                {SCHOOLS.map((s) => (
-                  <option key={s} value={s}>{s}</option>
+                {schoolsList.map((s) => (
+                  <option key={s.name} value={s.name}>{s.name} ({s.city})</option>
                 ))}
               </select>
             </div>
@@ -277,7 +353,7 @@ export default function Signup() {
                   className="sr-only"
                 />
                 <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-                  agreedToTerms ? 'bg-brand-teal border-brand-teal' : 'border-luxury-ink/20 bg-white group-hover:border-brand-teal/50'
+                  agreedToTerms ? 'bg-brand-teal border-brand-teal' : 'border-luxury-ink/20 bg-surface-card group-hover:border-brand-teal/50'
                 }`}>
                   {agreedToTerms && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                 </div>

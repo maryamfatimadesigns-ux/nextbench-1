@@ -18,6 +18,7 @@ service cloud.firestore {
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.email is string && data.email.size() > 0 && data.email.size() <= 150
         && data.school is string && data.school.size() > 0 && data.school.size() <= 100
+        && (!data.keys().hasAny(['city']) || (data.city is string && data.city.size() > 0 && data.city.size() <= 100))
         && data.verified is bool
         && (!data.keys().hasAny(['reputation']) || data.reputation is number)
         && (!data.keys().hasAny(['isAdmin']) || data.isAdmin is bool)
@@ -32,8 +33,8 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isSignedIn();
-      allow list: if isAdmin();
+      allow get: if true;
+      allow list: if true;
       
       allow create: if isVerified() 
         && isValidId(userId)
@@ -48,13 +49,13 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
         
       allow update: if isSignedIn() && isValidId(userId) && (
-        (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'school', 'profilePicture', 'about', 'idCardUrl', 'selfieUrl', 'verificationStatus', 'updatedAt']) 
+        (incoming().diff(existing()).affectedKeys().hasOnly(['username', 'lastUsernameChange', 'name', 'school', 'city', 'profilePicture', 'about', 'idCardUrl', 'selfieUrl', 'verificationStatus', 'updatedAt']) 
           && request.auth.uid == userId
           && isValidUser(incoming())
           && (incoming().get('verificationStatus', 'approved') == existing().get('verificationStatus', 'approved') || (existing().get('verificationStatus', 'approved') == 'rejected' && incoming().get('verificationStatus', 'approved') == 'pending'))
           && incoming().updatedAt == request.time)
         ||
-        (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['verified', 'reputation', 'isAdmin', 'verificationStatus', 'updatedAt'])
+        (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['verified', 'reputation', 'isAdmin', 'verificationStatus', 'city', 'updatedAt'])
           && isValidUser(incoming())
           && incoming().updatedAt == request.time)
       );
@@ -67,12 +68,14 @@ service cloud.firestore {
         && data.sellerId is string && data.sellerId.size() > 0 && data.sellerId.size() <= 128
         && data.sellerName is string && data.sellerName.size() > 0 && data.sellerName.size() <= 100
         && data.sellerSchool is string && data.sellerSchool.size() > 0 && data.sellerSchool.size() <= 100
+        && (!data.keys().hasAny(['city']) || (data.city is string && data.city.size() > 0 && data.city.size() <= 100))
         && data.title is string && data.title.size() > 0 && data.title.size() <= 100
         && data.price is number && data.price >= 0
         && data.condition is string && data.condition in ['Brand New', 'Like New', 'Good', 'Used']
         && data.category is string && data.category.size() > 0 && data.category.size() <= 50
         // Cloudinary image URLs can exceed 1000 chars — allow up to 2000
         && data.image is string && data.image.size() > 0 && data.image.size() <= 2000
+        && (!data.keys().hasAny(['images']) || (data.images is list && data.images.size() > 0 && data.images.size() <= 10))
         && data.description is string && data.description.size() <= 2000
         && data.meetupAvailable is bool
         && data.deliveryAvailable is bool
@@ -83,8 +86,8 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn();
+      allow get: if true;
+      allow list: if true;
       
       allow create: if isVerified() 
         && isValidId(productId)
@@ -100,7 +103,7 @@ service cloud.firestore {
         (request.auth.uid == existing().sellerId 
           && existing().status in ['pending', 'available']
           && incoming().status == existing().status
-          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'price', 'condition', 'category', 'image', 'description', 'meetupAvailable', 'deliveryAvailable', 'updatedAt'])
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'price', 'condition', 'category', 'image', 'images', 'description', 'meetupAvailable', 'deliveryAvailable', 'city', 'updatedAt'])
           && incoming().updatedAt == request.time)
         ||
         // Buyer reserves product
@@ -132,10 +135,11 @@ service cloud.firestore {
 
     // === CHAT ROOMS ===
     function isValidChatRoom(data) {
-      return data.keys().hasAll(['participants', 'productId', 'updatedAt'])
+      return data.keys().hasAll(['participants', 'updatedAt'])
         && data.participants is list && data.participants.size() == 2
-        && data.productId is string && data.productId.size() > 0
-        && data.updatedAt is timestamp;
+        && data.updatedAt is timestamp
+        && (!data.keys().hasAny(['productId']) || data.productId is string)
+        && (!data.keys().hasAny(['type']) || data.type in ['dm', 'product']);
     }
 
     function isValidMessage(data) {
@@ -161,7 +165,7 @@ service cloud.firestore {
         
       allow update: if isVerified() && isValidId(roomId)
         && request.auth.uid in existing().participants
-        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt'])
+        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy'])
           || isAdmin());
 
       match /messages/{messageId} {
@@ -172,6 +176,16 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
           && isValidMessage(incoming())
           && incoming().createdAt == request.time;
+          
+        allow update: if isVerified() 
+          && isValidId(messageId)
+          && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          && (
+             incoming().diff(existing()).affectedKeys().hasOnly(['deletedFor'])
+             ||
+             (incoming().diff(existing()).affectedKeys().hasOnly(['isDeletedForEveryone', 'text', 'image']) 
+              && request.auth.uid == existing().senderId)
+          );
       }
     }
 
@@ -223,6 +237,167 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
 
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // === POSTS (COMMUNITY) ===
+    function isValidPost(data) {
+      return data.keys().hasAll(['title', 'content', 'type', 'school', 'authorId', 'authorName', 'status', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.content is string && data.content.size() > 0 && data.content.size() <= 5000
+        && data.type is string && data.type in ['info', 'notes', 'event', 'others']
+        && data.school is string && data.school.size() > 0
+        && data.authorId is string && data.authorId.size() > 0
+        && data.authorName is string && data.authorName.size() > 0
+        && data.status is string && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!data.keys().hasAny(['city']) || (data.city == null || data.city is string))
+        && (!data.keys().hasAny(['upvotesCount']) || (data.upvotesCount is number))
+        && (!data.keys().hasAny(['repliesCount']) || (data.repliesCount is number))
+        && (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string))
+        && (!data.keys().hasAny(['imageUrls']) || (data.imageUrls is list))
+        && (!data.keys().hasAny(['privacy']) || (data.privacy in ['public', 'private']));
+    }
+
+    match /posts/{postId} {
+      // Anyone can read posts, but the client will filter by status == 'approved' for public feed
+      allow get: if true;
+      allow list: if true;
+
+      allow create: if isVerified()
+        && isValidId(postId)
+        && request.auth.uid == incoming().authorId
+        && isValidPost(incoming())
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerified() && isValidId(postId) && (
+        // Author updates post content
+        (request.auth.uid == existing().authorId
+          && incoming().status == existing().status
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'type', 'city', 'privacy', 'updatedAt'])
+          && incoming().updatedAt == request.time)
+        ||
+        // Any verified user can update upvotes and replies counts
+        (incoming().diff(existing()).affectedKeys().hasOnly(['upvotesCount', 'repliesCount', 'updatedAt']))
+        ||
+        (isAdmin() && incoming().updatedAt == request.time)
+      );
+
+      allow delete: if isVerified() && isValidId(postId) && (request.auth.uid == existing().authorId || isAdmin());
+    }
+
+    // === POST UPVOTES ===
+    match /post_upvotes/{upvoteId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isVerified() && incoming().userId == request.auth.uid && incoming().postId is string;
+      allow delete: if isVerified() && resource.data.userId == request.auth.uid;
+    }
+
+    // === POST REPLIES ===
+    match /post_replies/{replyId} {
+      allow read: if true;
+      allow list: if true;
+      allow create: if isVerified() 
+        && incoming().postId is string
+        && incoming().authorId == request.auth.uid
+        && incoming().authorName is string
+        && incoming().authorSchool is string
+        && incoming().content is string
+        && incoming().content.size() > 0 && incoming().content.size() <= 1000
+        && incoming().createdAt == request.time;
+      allow delete: if isVerified() && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
+    // === FOLLOWS ===
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      
+      allow create: if isVerified()
+        && isValidId(followId)
+        && incoming().followerId == request.auth.uid
+        && incoming().followerId is string
+        && incoming().followingId is string
+        && incoming().followingId.size() > 0
+        && incoming().followerId != incoming().followingId
+        && incoming().createdAt == request.time;
+      
+      allow delete: if isVerified() 
+        && resource.data.followerId == request.auth.uid;
+    }
+
+    // === SCHOOL REQUESTS ===
+    function isValidSchoolRequest(data) {
+      return data.keys().hasAll(['schoolName', 'city', 'website', 'idCardUrl', 'requesterName', 'requesterEmail', 'status', 'createdAt'])
+        && data.schoolName is string && data.schoolName.size() > 0
+        && data.city is string && data.city.size() > 0
+        && data.website is string && data.website.size() > 0
+        && data.idCardUrl is string && data.idCardUrl.size() > 0
+        && data.requesterName is string && data.requesterName.size() > 0
+        && data.requesterEmail is string && data.requesterEmail.size() > 0
+        && data.status is string && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp;
+    }
+
+    match /school_requests/{requestId} {
+      allow read: if isAdmin();
+      
+      // Allow unauthenticated create since this happens during signup
+      allow create: if isValidId(requestId)
+        && isValidSchoolRequest(incoming())
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time;
+
+      allow update: if isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if isAdmin();
+    }
+
+    // === SCHOOLS ===
+    match /schools/{schoolId} {
+      allow read: if true;
+      
+      allow create: if isAdmin()
+        && incoming().name is string
+        && incoming().name.size() > 0
+        && incoming().createdAt == request.time;
+        
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    // === BLOCKS ===
+    match /blocks/{blockId} {
+      allow read: if isSignedIn() && (resource.data.blockerId == request.auth.uid || resource.data.blockedId == request.auth.uid);
+      allow list: if isSignedIn();
+      allow create: if isVerified() 
+        && incoming().blockerId == request.auth.uid
+        && incoming().blockedId is string
+        && incoming().createdAt == request.time;
+      allow delete: if isVerified() && resource.data.blockerId == request.auth.uid;
+    }
+
+    // === REPORTS ===
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow list: if isAdmin();
+      allow create: if isVerified()
+        && incoming().reporterId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // === USERNAMES ===
+    match /usernames/{username} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isVerified()
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow delete: if isVerified() && resource.data.userId == request.auth.uid;
     }
   }
 }

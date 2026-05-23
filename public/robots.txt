@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /messages
+
+# Sitemap
+Sitemap: https://nextbench.in/sitemap.xml

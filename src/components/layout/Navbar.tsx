@@ -29,7 +29,8 @@ export default function Navbar() {
   };
 
   const navLinks: { name: string; path: string; isHash?: boolean }[] = [
-    { name: 'Marketplace', path: '/marketplace' },
+    { name: 'Marketplace', path: '/dashboard' },
+    { name: 'Community', path: '/community' },
   ];
 
   if (!user) {
@@ -42,7 +43,7 @@ export default function Navbar() {
   return (
     <nav 
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled || !isLandingPage ? 'bg-white/80 backdrop-blur-md py-4 border-b border-brand-teal/10 shadow-sm' : 'bg-transparent py-8'
+        isScrolled || !isLandingPage ? 'nav-glass py-4 border-b border-brand-teal/10 shadow-sm' : 'bg-transparent py-8'
       }`}
     >
       <div className="max-w-7xl mx-auto px-6 md:px-12 flex items-center justify-between">
@@ -162,7 +163,7 @@ export default function Navbar() {
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="md:hidden absolute top-full left-0 right-0 bg-white border-t border-luxury-ink/5 p-6 luxury-shadow"
+          className="md:hidden absolute top-full left-0 right-0 theme-card border-t border-luxury-ink/5 p-6 luxury-shadow"
         >
           <div className="flex flex-col gap-6">
             {navLinks.map((link) => (

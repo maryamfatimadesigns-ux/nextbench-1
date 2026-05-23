@@ -19,7 +19,7 @@ export default function Login() {
   useEffect(() => {
     if (!loading && user && !isSigningIn && !redirectedRef.current) {
       redirectedRef.current = true;
-      navigate('/marketplace', { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [loading, user, isSigningIn, navigate]);
 
@@ -58,7 +58,7 @@ export default function Login() {
       const data = docSnap.data();
 
       if (data.verified) {
-        navigate('/marketplace', { replace: true });
+        navigate('/dashboard', { replace: true });
       } else {
         navigate('/verification', { replace: true });
       }
@@ -132,7 +132,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={isSigningIn}
-            className="w-full bg-luxury-ink text-white py-5 rounded-sm font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-luxury-ink/10 hover:bg-brand-teal transition-all active:scale-[0.98] flex items-center justify-center gap-3 group disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full bg-luxury-ink text-surface-base py-5 rounded-sm font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-luxury-ink/10 hover:bg-brand-teal transition-all active:scale-[0.98] flex items-center justify-center gap-3 group disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <ShieldCheck size={16} className="opacity-60 group-hover:opacity-100 transition-opacity" />
             {isSigningIn ? 'Verifying...' : 'Authenticate Identity with Google'}

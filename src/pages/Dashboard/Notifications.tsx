@@ -122,7 +122,7 @@ export default function Notifications() {
           <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/30">Loading notifications...</p>
         </div>
       ) : notifications.length === 0 ? (
-        <div className="bg-white rounded-3xl p-20 text-center luxury-shadow border border-luxury-ink/5">
+        <div className="bg-surface-card rounded-3xl p-20 text-center luxury-shadow border border-luxury-ink/5">
           <div className="w-16 h-16 bg-brand-teal/5 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Bell className="text-brand-teal" size={32} />
           </div>
@@ -143,7 +143,7 @@ export default function Notifications() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, x: -40 }}
                 onClick={() => handleClick(notif)}
-                className={`bg-white rounded-2xl p-5 md:p-6 luxury-shadow border flex items-start gap-4 cursor-pointer transition-all group hover:translate-x-1 ${notif.read
+                className={`bg-surface-card rounded-2xl p-5 md:p-6 luxury-shadow border flex items-start gap-4 cursor-pointer transition-all group hover:translate-x-1 ${notif.read
                   ? 'border-luxury-ink/5 opacity-60'
                   : 'border-brand-teal/20 bg-brand-teal/[0.02]'
                   }`}

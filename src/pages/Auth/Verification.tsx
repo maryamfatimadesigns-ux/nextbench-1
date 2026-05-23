@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useToast } from '../../lib/ToastContext';
+import { isHeicFile, convertHeicToJpeg } from '../../lib/heic-converter';
 
 export default function Verification() {
   const [step, setStep] = useState(1);
@@ -27,7 +28,7 @@ export default function Verification() {
   React.useEffect(() => {
     // Already verified → go straight to marketplace
     if (userData?.verified) {
-      navigate('/marketplace');
+      navigate('/dashboard');
       return;
     }
     // If user already submitted and is pending, jump to step 3 immediately
@@ -36,9 +37,23 @@ export default function Verification() {
     }
   }, [userData]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
+      let file = e.target.files[0];
+      
+      const isHeic = isHeicFile(file);
+      const isStandardImage = file.type.startsWith('image/');
+      
+      if (!isHeic && !isStandardImage) {
+        showToast('Please select a valid image file', 'error');
+        return;
+      }
+      
+      if (isHeic) {
+        showToast('Converting HEIC image...', 'info');
+        file = await convertHeicToJpeg(file);
+      }
+      
       if (file.size > 5 * 1024 * 1024) {
         showToast('Image must be less than 5MB', 'error');
         return;
@@ -48,9 +63,23 @@ export default function Verification() {
     }
   };
 
-  const handleSelfieChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelfieChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
+      let file = e.target.files[0];
+      
+      const isHeic = isHeicFile(file);
+      const isStandardImage = file.type.startsWith('image/');
+      
+      if (!isHeic && !isStandardImage) {
+        showToast('Please select a valid image file', 'error');
+        return;
+      }
+      
+      if (isHeic) {
+        showToast('Converting HEIC image...', 'info');
+        file = await convertHeicToJpeg(file);
+      }
+      
       if (file.size > 5 * 1024 * 1024) {
         showToast('Image must be less than 5MB', 'error');
         return;
@@ -128,7 +157,7 @@ export default function Verification() {
           key={step}
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-white rounded-[3rem] p-10 md:p-16 luxury-shadow border border-luxury-ink/5"
+          className="bg-surface-card rounded-[3rem] p-10 md:p-16 luxury-shadow border border-luxury-ink/5"
         >
           {step === 1 && (
             <div className="text-center">
@@ -148,7 +177,7 @@ export default function Verification() {
                   type="file" 
                   ref={fileInputRef} 
                   onChange={handleFileChange} 
-                  accept="image/*" 
+                  accept="image/*,.heic,.heif" 
                   className="hidden" 
                 />
                 {idPreview ? (
@@ -192,7 +221,7 @@ export default function Verification() {
                   type="file" 
                   ref={selfieInputRef} 
                   onChange={handleSelfieChange} 
-                  accept="image/*" 
+                  accept="image/*,.heic,.heif" 
                   capture="user"
                   className="hidden" 
                 />
@@ -251,7 +280,7 @@ export default function Verification() {
             className={`w-full py-6 rounded-full font-bold text-lg transition-all flex items-center justify-center gap-3 ${
               isUploading 
                 ? 'bg-luxury-ink/10 text-luxury-ink/20 cursor-not-allowed' 
-                : 'bg-luxury-ink text-white hover:bg-brand-teal active:scale-95 luxury-shadow'
+                : 'bg-luxury-ink text-surface-base hover:bg-brand-teal active:scale-95 luxury-shadow'
             }`}
           >
             {isUploading ? 'Securing Document...' : step === 3 ? 'Go to Marketplace' : 'Confirm & Upload'}

@@ -1,8 +1,11 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React from 'react';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import Navbar from './components/layout/Navbar';
 import Footer from './components/layout/Footer';
+import DashboardLayout from './components/layout/DashboardLayout';
+
 import LandingPage from './pages/LandingPage';
-import Marketplace from './pages/Dashboard/Marketplace';
 import Login from './pages/Auth/Login';
 import Signup from './pages/Auth/Signup';
 import Verification from './pages/Auth/Verification';
@@ -16,6 +19,9 @@ import Wishlist from './pages/Dashboard/Wishlist';
 import Notifications from './pages/Dashboard/Notifications';
 import TermsPage from './pages/Legal/TermsPage';
 import PrivacyPage from './pages/Legal/PrivacyPage';
+import Feed from './pages/Dashboard/Feed';
+import Search from './pages/Dashboard/Search';
+import UsernameProfile from './pages/Dashboard/UsernameProfile';
 import ProtectedRoute from './components/ui/ProtectedRoute';
 import { useAuth } from './lib/AuthContext';
 
@@ -27,76 +33,67 @@ function VerificationGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function MainLayout() {
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Navbar />
+      <main className="flex-1"><Outlet /></main>
+      <Footer />
+    </div>
+  );
+}
+
+function DashLayout() {
+  return (
+    <DashboardLayout>
+      <Outlet />
+    </DashboardLayout>
+  );
+}
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-surface-base font-sans select-none">
-      <Navbar />
-      <main>
-        <Routes>
-          {/* Public */}
+    <div className="bg-surface-base font-sans select-none">
+      <Helmet>
+        <title>Nextbench | The Student Marketplace</title>
+        <meta name="description" content="Nextbench is the exclusive marketplace and community for verified students. Buy, sell, and connect." />
+      </Helmet>
+      
+      <Routes>
+        {/* Public Marketing/Auth Layout (Navbar + Footer) */}
+        <Route element={<MainLayout />}>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/marketplace" element={<Marketplace />} />
-          <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
-          <Route path="/dashboard" element={<Marketplace />} />
-
-          {/* Auth pages — redirect logged-in users internally */}
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
-
-          {/* Verification — only for logged-in users; not-logged-in → /signup */}
           <Route path="/verification" element={<VerificationGuard><Verification /></VerificationGuard>} />
+        </Route>
 
-          {/* Protected: Require auth */}
-          <Route path="/sell" element={
-            <ProtectedRoute requireAuth requireVerified>
-              <SellItem />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile" element={
-            <ProtectedRoute requireAuth>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile/:userId" element={
-            <ProtectedRoute requireAuth>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="/messages" element={
-            <ProtectedRoute requireAuth>
-              <ChatList />
-            </ProtectedRoute>
-          } />
-          <Route path="/chat/:roomId" element={
-            <ProtectedRoute requireAuth>
-              <ChatRoom />
-            </ProtectedRoute>
-          } />
-          <Route path="/wishlist" element={
-            <ProtectedRoute requireAuth>
-              <Wishlist />
-            </ProtectedRoute>
-          } />
-          <Route path="/notifications" element={
-            <ProtectedRoute requireAuth>
-              <Notifications />
-            </ProtectedRoute>
-          } />
+        {/* Dashboard 3-Column Layout */}
+        <Route element={<DashLayout />}>
+          {/* Protected Routes */}
+          {/* Publicly Accessible Dashboard Routes */}
+          <Route path="/dashboard" element={<Feed />} />
+          <Route path="/community" element={<Feed />} />
+          <Route path="/search" element={<Search />} />
+          <Route path="/product/:id" element={<ProductDetail />} />
+          <Route path="/sell" element={<ProtectedRoute requireAuth requireVerified><SellItem /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute requireAuth><Profile /></ProtectedRoute>} />
+          <Route path="/profile/:userId" element={<ProtectedRoute requireAuth><Profile /></ProtectedRoute>} />
+          <Route path="/messages" element={<ProtectedRoute requireAuth><ChatList /></ProtectedRoute>} />
+          <Route path="/chat/:roomId" element={<ProtectedRoute requireAuth><ChatRoom /></ProtectedRoute>} />
+          <Route path="/wishlist" element={<ProtectedRoute requireAuth><Wishlist /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute requireAuth><Notifications /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute requireAuth requireAdmin><AdminPanel /></ProtectedRoute>} />
+          
+          {/* Username route — MUST be last in dashboard routes */}
+          <Route path="/:username" element={<UsernameProfile />} />
+        </Route>
 
-          {/* Protected: Require admin */}
-          <Route path="/admin" element={
-            <ProtectedRoute requireAuth requireAdmin>
-              <AdminPanel />
-            </ProtectedRoute>
-          } />
-
-          {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-      <Footer />
+        {/* Catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </div>
   );
 }

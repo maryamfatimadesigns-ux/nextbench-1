@@ -6,16 +6,16 @@ export default function Footer() {
   const { userData } = useAuth();
 
   return (
-    <footer className="bg-white border-t border-brand-teal/10 pt-24 pb-12">
+    <footer className="bg-surface-base border-t border-brand-teal/10 pt-24 pb-12">
       <div className="max-w-7xl mx-auto px-12">
-        <div className="flex flex-col md:flex-row items-center gap-12 bg-white/50 backdrop-blur-sm p-4 mb-20">
+        <div className="flex flex-col md:flex-row items-center gap-12 theme-card p-4 mb-20 rounded-2xl">
           <div className="flex-1">
             <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-brand-teal mb-4">Featured Selection</div>
             <div className="flex flex-wrap gap-6">
-              <Link to="/marketplace?cat=books" className="text-xs font-bold hover:text-brand-pink tracking-wide">Textbooks</Link>
-              <Link to="/marketplace?cat=electronics" className="text-xs font-bold hover:text-brand-pink tracking-wide">Electronics</Link>
-              <Link to="/marketplace?cat=notes" className="text-xs font-bold hover:text-brand-pink tracking-wide">Premium Notes</Link>
-              <Link to="/marketplace?cat=uniforms" className="text-xs font-bold hover:text-brand-pink tracking-wide">Uniforms</Link>
+              <Link to="/dashboard?cat=books" className="text-xs font-bold hover:text-brand-pink tracking-wide">Textbooks</Link>
+              <Link to="/dashboard?cat=electronics" className="text-xs font-bold hover:text-brand-pink tracking-wide">Electronics</Link>
+              <Link to="/dashboard?cat=notes" className="text-xs font-bold hover:text-brand-pink tracking-wide">Premium Notes</Link>
+              <Link to="/dashboard?cat=uniforms" className="text-xs font-bold hover:text-brand-pink tracking-wide">Uniforms</Link>
             </div>
           </div>
           

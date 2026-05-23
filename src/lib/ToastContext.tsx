@@ -29,7 +29,7 @@ const COLORS: Record<ToastType, string> = {
   success: 'bg-brand-teal text-white',
   error: 'bg-red-500 text-white',
   warning: 'bg-amber-500 text-white',
-  info: 'bg-luxury-ink text-white',
+  info: 'bg-luxury-ink text-surface-base',
 };
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
