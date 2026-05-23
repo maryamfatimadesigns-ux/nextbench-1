@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { collection, query, getDocs, limit } from 'firebase/firestore';
+import { collection, query, getDocs, limit, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Search as SearchIcon, Users, Grid3X3, Package, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -26,6 +26,16 @@ export default function Search() {
 
   // Fetch initial data or perform search
   useEffect(() => {
+    // Don't fetch anything until the user types
+    if (!searchQuery.trim()) {
+      setUsers([]);
+      setPosts([]);
+      setProducts([]);
+      setLoading(false);
+      if (activeTab === 'users') setActiveTab('all');
+      return;
+    }
+
     const performSearch = async () => {
       setLoading(true);
       try {
@@ -48,43 +58,31 @@ export default function Search() {
         }
 
         const [usersSnap, postsSnap, productsSnap] = await Promise.all([
-          getDocs(query(collection(db, 'users'), limit(50))),
-          getDocs(query(collection(db, 'posts'), limit(50))),
-          getDocs(query(collection(db, 'products'), limit(50)))
+          getDocs(query(collection(db, 'users'), limit(20))),
+          getDocs(query(collection(db, 'posts'), limit(20))),
+          getDocs(query(collection(db, 'products'), limit(20)))
         ]);
 
-        const fetchedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-        const fetchedPosts = postsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-        const fetchedProducts = productsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((p: any) => p.status !== 'sold');
+        const lowerQ = searchQuery.toLowerCase();
 
-        if (!searchQuery.trim()) {
-          // If no search query, show some trending/recent items
-          setUsers(fetchedUsers.slice(0, 5));
-          setPosts(fetchedPosts.slice(0, 5));
-          setProducts(fetchedProducts.slice(0, 5));
-          
-          // Reset tab to 'all' when clearing search if it was stuck on 'users' from an @ search
-          if (activeTab === 'users' && !searchQuery) {
-            setActiveTab('all');
-          }
-        } else {
-          const lowerQ = searchQuery.toLowerCase();
-          setUsers(fetchedUsers.filter(u => 
-            (u.name && u.name.toLowerCase().includes(lowerQ)) || 
-            (u.school && u.school.toLowerCase().includes(lowerQ)) ||
-            (u.username && u.username.toLowerCase().includes(lowerQ))
-          ));
-          setPosts(fetchedPosts.filter(p => 
-            (p.title && p.title.toLowerCase().includes(lowerQ)) || 
-            (p.content && p.content.toLowerCase().includes(lowerQ)) ||
-            (p.school && p.school.toLowerCase().includes(lowerQ))
-          ));
-          setProducts(fetchedProducts.filter(p => 
+        setUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(u => 
+          (u.name && u.name.toLowerCase().includes(lowerQ)) || 
+          (u.school && u.school.toLowerCase().includes(lowerQ)) ||
+          (u.username && u.username.toLowerCase().includes(lowerQ))
+        ));
+        setPosts(postsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(p => 
+          (p.title && p.title.toLowerCase().includes(lowerQ)) || 
+          (p.content && p.content.toLowerCase().includes(lowerQ)) ||
+          (p.school && p.school.toLowerCase().includes(lowerQ))
+        ));
+        setProducts(productsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any))
+          .filter((p: any) => p.status !== 'sold')
+          .filter(p => 
             (p.title && p.title.toLowerCase().includes(lowerQ)) || 
             (p.category && p.category.toLowerCase().includes(lowerQ)) ||
             (p.sellerName && p.sellerName.toLowerCase().includes(lowerQ))
-          ));
-        }
+          )
+        );
       } catch (err) {
         console.error('Search error:', err);
       } finally {
@@ -94,7 +92,7 @@ export default function Search() {
 
     const debounceTimer = setTimeout(() => {
       performSearch();
-    }, 300); // 300ms debounce
+    }, 400); // 400ms debounce (slightly longer to reduce rapid-fire queries)
 
     return () => clearTimeout(debounceTimer);
   }, [searchQuery]);
