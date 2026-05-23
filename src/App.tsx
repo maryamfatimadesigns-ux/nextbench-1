@@ -73,22 +73,22 @@ export default function App() {
         {/* Dashboard 3-Column Layout */}
         <Route element={<DashLayout />}>
           {/* Protected Routes */}
-          {/* Publicly Accessible Dashboard Routes */}
-          <Route path="/dashboard" element={<Feed />} />
-          <Route path="/community" element={<Feed />} />
-          <Route path="/search" element={<Search />} />
-          <Route path="/product/:id" element={<ProductDetail />} />
+          {/* Protected Dashboard Routes */}
+          <Route path="/dashboard" element={<ProtectedRoute requireAuth requireVerified><Feed /></ProtectedRoute>} />
+          <Route path="/community" element={<ProtectedRoute requireAuth requireVerified><Feed /></ProtectedRoute>} />
+          <Route path="/search" element={<ProtectedRoute requireAuth requireVerified><Search /></ProtectedRoute>} />
+          <Route path="/product/:id" element={<ProtectedRoute requireAuth requireVerified><ProductDetail /></ProtectedRoute>} />
           <Route path="/sell" element={<ProtectedRoute requireAuth requireVerified><SellItem /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute requireAuth><Profile /></ProtectedRoute>} />
-          <Route path="/profile/:userId" element={<ProtectedRoute requireAuth><Profile /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute requireAuth requireVerified><Profile /></ProtectedRoute>} />
+          <Route path="/profile/:userId" element={<ProtectedRoute requireAuth requireVerified><Profile /></ProtectedRoute>} />
           <Route path="/messages" element={<ProtectedRoute requireAuth requireVerified><ChatList /></ProtectedRoute>} />
           <Route path="/chat/:roomId" element={<ProtectedRoute requireAuth requireVerified><ChatRoom /></ProtectedRoute>} />
-          <Route path="/wishlist" element={<ProtectedRoute requireAuth><Wishlist /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute requireAuth><Notifications /></ProtectedRoute>} />
+          <Route path="/wishlist" element={<ProtectedRoute requireAuth requireVerified><Wishlist /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute requireAuth requireVerified><Notifications /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute requireAuth requireAdmin><AdminPanel /></ProtectedRoute>} />
           
           {/* Username route — MUST be last in dashboard routes */}
-          <Route path="/:username" element={<UsernameProfile />} />
+          <Route path="/:username" element={<ProtectedRoute requireAuth requireVerified><UsernameProfile /></ProtectedRoute>} />
         </Route>
 
         {/* Catch-all */}
