@@ -322,7 +322,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const handleCopyUsername = () => {
     const un = profileUser?.username;
     if (!un) return;
-    navigator.clipboard.writeText(`nextbench.in/${un}`);
+    navigator.clipboard.writeText(`nextbench.in/u/${un}`);
     setCopiedUsername(true);
     showToast('Profile link copied!', 'success');
     setTimeout(() => setCopiedUsername(false), 2000);
@@ -838,7 +838,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                     {followListUsers.map(u => (
                       <Link
                         key={u.id}
-                        to={u.username ? `/${u.username}` : `/profile/${u.id}`}
+                        to={u.username ? `/u/${u.username}` : `/profile/${u.id}`}
                         onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); }}
                         className="flex items-center gap-4 p-3 rounded-xl hover:bg-surface-soft transition-all group"
                       >

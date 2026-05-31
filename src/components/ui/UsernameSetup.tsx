@@ -195,7 +195,7 @@ export default function UsernameSetup({ isOpen, onClose, mandatory = false, onCo
                 <ul className="text-[11px] text-luxury-ink/50 space-y-1">
                   <li>• 3–20 characters, starts with a letter</li>
                   <li>• Only lowercase letters, numbers, underscores, and dots</li>
-                  <li>• Your profile URL: nextbench.in/<span className="text-brand-teal font-bold">{username || 'username'}</span></li>
+                  <li>• Your profile URL: nextbench.in/u/<span className="text-brand-teal font-bold">{username || 'username'}</span></li>
                 </ul>
               </div>
 

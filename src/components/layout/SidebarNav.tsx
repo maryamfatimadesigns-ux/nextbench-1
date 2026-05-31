@@ -60,7 +60,7 @@ export default function SidebarNav() {
     { name: 'Sell', path: '/sell', icon: PlusCircle },
     { name: 'Messages', path: '/messages', icon: MessageSquare },
     { name: 'Notifications', path: '/notifications', icon: Bell },
-    { name: 'Profile', path: user ? (userData?.username ? `/${userData.username}` : `/profile/${user.uid}`) : '/login', icon: User },
+    { name: 'Profile', path: user ? (userData?.username ? `/u/${userData.username}` : `/profile/${user.uid}`) : '/login', icon: User },
     ...(userData?.isAdmin ? [{ name: 'Admin', path: '/admin', icon: ShieldCheck }] : []),
   ];
 
@@ -114,7 +114,7 @@ export default function SidebarNav() {
         {user ? (
           <div className="p-1.5 rounded-3xl border bg-surface-base/80 backdrop-blur-md shadow-sm transition-all hover:shadow-md" style={{ borderColor: 'var(--color-border)' }}>
             <Link 
-              to={userData?.username ? `/${userData.username}` : `/profile/${user.uid}`}
+              to={userData?.username ? `/u/${userData.username}` : `/profile/${user.uid}`}
               className="flex items-center gap-3 p-2.5 rounded-2xl hover:bg-surface-soft transition-colors group relative overflow-hidden"
             >
               <div className="w-11 h-11 rounded-full bg-brand-teal/10 flex items-center justify-center overflow-hidden shrink-0 border border-brand-teal/20 group-hover:border-brand-teal/40 transition-colors">

@@ -14,7 +14,7 @@ export default function BottomNav() {
     { name: 'Search', path: '/search', icon: Search },
     { name: 'Sell', path: '/sell', icon: PlusCircle },
     { name: 'Messages', path: '/messages', icon: MessageSquare },
-    { name: 'Profile', path: user ? (userData?.username ? `/${userData.username}` : `/profile/${user.uid}`) : '/login', icon: User },
+    { name: 'Profile', path: user ? (userData?.username ? `/u/${userData.username}` : `/profile/${user.uid}`) : '/login', icon: User },
     ...(userData?.isAdmin ? [{ name: 'Admin', path: '/admin', icon: ShieldCheck }] : []),
   ];
 

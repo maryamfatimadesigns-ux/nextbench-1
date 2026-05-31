@@ -106,8 +106,8 @@ export default function App() {
               <Route path="/notifications" element={<ProtectedRoute requireAuth requireVerified><Notifications /></ProtectedRoute>} />
               <Route path="/admin" element={<ProtectedRoute requireAuth requireAdmin><AdminPanel /></ProtectedRoute>} />
               
-              {/* Username route — MUST be last in dashboard routes */}
-              <Route path="/:username" element={<ProtectedRoute requireAuth><UsernameProfile /></ProtectedRoute>} />
+              {/* Username profile route */}
+              <Route path="/u/:username" element={<ProtectedRoute requireAuth><UsernameProfile /></ProtectedRoute>} />
             </Route>
 
             {/* Catch-all */}
