@@ -209,7 +209,7 @@ export default function ChatList() {
   return (
     <div className="pb-20 max-w-2xl mx-auto min-h-screen">
       {/* Header and Search */}
-      <div className="sticky top-0 z-40 bg-surface-base px-4 md:px-0 pt-6 pb-4 border-b border-luxury-ink/5">
+      <div className="sticky top-0 z-40 px-4 md:px-0 pt-6 pb-4 border-b border-luxury-ink/5" style={{ background: 'var(--color-surface-card)' }}>
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-3xl font-bold text-luxury-ink">Chats</h1>
           <button

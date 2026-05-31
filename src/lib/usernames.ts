@@ -14,11 +14,14 @@ import { db } from './firebase';
 
 // Reserved words that cannot be used as usernames
 const RESERVED_WORDS = new Set([
+  // App routes
   'dashboard', 'login', 'signup', 'admin', 'sell', 'search', 'profile',
   'messages', 'chat', 'wishlist', 'notifications', 'community', 'verification',
-  'terms', 'privacy', 'settings', 'product', 'nextbench', 'help', 'support',
-  'about', 'contact', 'api', 'app', 'www', 'mail', 'blog', 'feed',
-  'explore', 'trending', 'marketplace', 'null', 'undefined', 'mod', 'moderator',
+  'terms', 'privacy', 'careers', 'settings', 'product', 'feed',
+  // Brand / system
+  'nextbench', 'help', 'support', 'about', 'contact', 'api', 'app',
+  'www', 'mail', 'blog', 'explore', 'trending', 'marketplace',
+  'null', 'undefined', 'mod', 'moderator',
 ]);
 
 // Username validation regex: 3-20 chars, starts with letter, allows a-z, 0-9, _, .
