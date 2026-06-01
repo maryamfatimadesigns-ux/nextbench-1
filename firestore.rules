@@ -356,6 +356,22 @@ service cloud.firestore {
       allow delete: if isVerified() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid || isAdmin());
     }
 
+    // === POST DOWNVOTES ===
+    match /post_downvotes/{downvoteId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isVerified() && incoming().userId == request.auth.uid && incoming().postId is string;
+      allow delete: if isVerified() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid || isAdmin());
+    }
+
+    // === REPLY UPVOTES ===
+    match /reply_upvotes/{upvoteId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isVerified() && incoming().userId == request.auth.uid && incoming().replyId is string;
+      allow delete: if isVerified() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/post_replies/$(resource.data.replyId)).data.authorId == request.auth.uid || isAdmin());
+    }
+
     // === SAVED POSTS ===
     match /saved_posts/{saveId} {
       allow read: if isSignedIn();
