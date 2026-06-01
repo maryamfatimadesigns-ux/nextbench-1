@@ -202,6 +202,49 @@ service cloud.firestore {
       }
     }
 
+    // === CLUBS (Group Chats) ===
+    match /clubs/{clubId} {
+      // Anyone signed in can read public clubs; members can read private clubs
+      allow get: if isSignedIn() && (resource.data.type == 'public' || request.auth.uid in resource.data.memberIds);
+      // list: allow signed-in users — client queries filter appropriately
+      allow list: if isSignedIn();
+
+      // Create: verified user, must be lead and first member
+      allow create: if isVerified()
+        && incoming().leadId == request.auth.uid
+        && request.auth.uid in incoming().memberIds
+        && incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 100
+        && incoming().type in ['public', 'private']
+        && incoming().inviteCode is string && incoming().inviteCode.size() > 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Update: must be a member
+      allow update: if isVerified()
+        && (request.auth.uid in existing().memberIds
+            // Allow non-members to add themselves (join)
+            || (incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'memberCount', 'updatedAt'])
+                && request.auth.uid in incoming().memberIds))
+        && incoming().updatedAt == request.time;
+
+      // Delete: lead only
+      allow delete: if isVerified() && request.auth.uid == existing().leadId;
+
+      // Club messages
+      match /messages/{messageId} {
+        allow list: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds;
+
+        allow create: if isVerified()
+          && request.auth.uid == incoming().senderId
+          && request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds
+          && incoming().createdAt == request.time;
+
+        allow update: if isVerified()
+          && request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds;
+      }
+    }
+
 
     // === WISHLISTS ===
     match /wishlists/{wishlistId} {
