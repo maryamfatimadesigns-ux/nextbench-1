@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Moon, Sun, ShieldAlert, Edit2, LogOut, Loader2, LifeBuoy } from 'lucide-react';
+import { X, Moon, Sun, ShieldAlert, Edit2, LogOut, Loader2, LifeBuoy, Bookmark, User, Settings, ExternalLink, Trash2 } from 'lucide-react';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
@@ -21,9 +21,11 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
   const { showToast } = useToast();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'account' | 'support'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'account' | 'support' | 'saved'>('general');
   const [blockedUsers, setBlockedUsers] = useState<any[]>([]);
   const [loadingBlocked, setLoadingBlocked] = useState(false);
+  const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [loadingSaved, setLoadingSaved] = useState(false);
 
   // Username states
   const [newUsername, setNewUsername] = useState('');
@@ -41,6 +43,9 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
   useEffect(() => {
     if (isOpen && activeTab === 'blocked' && user) {
       loadBlockedUsers();
+    }
+    if (isOpen && activeTab === 'saved' && user) {
+      loadSavedPosts();
     }
   }, [isOpen, activeTab, user]);
 
@@ -79,6 +84,39 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
       showToast('User unblocked', 'success');
     } catch (err) {
       showToast('Failed to unblock user', 'error');
+    }
+  };
+
+  const loadSavedPosts = async () => {
+    if (!user) return;
+    setLoadingSaved(true);
+    try {
+      const q = query(collection(db, 'saved_posts'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+      const posts: any[] = [];
+      for (const d of snap.docs) {
+        const postDoc = await getDoc(doc(db, 'posts', d.data().postId));
+        if (postDoc.exists()) {
+          posts.push({ saveDocId: d.id, id: postDoc.id, ...postDoc.data() });
+        }
+      }
+      // Sort by newest saved first implicitly or based on post date
+      posts.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+      setSavedPosts(posts);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingSaved(false);
+    }
+  };
+
+  const handleUnsave = async (saveDocId: string) => {
+    try {
+      await deleteDoc(doc(db, 'saved_posts', saveDocId));
+      setSavedPosts(prev => prev.filter(p => p.saveDocId !== saveDocId));
+      showToast('Post removed from saved', 'info');
+    } catch (err) {
+      showToast('Failed to unsave post', 'error');
     }
   };
 
@@ -177,7 +215,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
           initial={{ scale: 0.95, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 20 }}
-          className="rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+          className="rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
           style={{ background: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
           onClick={e => e.stopPropagation()}
         >
@@ -189,27 +227,27 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
             </button>
           </div>
 
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-[400px]">
             {/* Sidebar */}
-            <div className="w-1/3 border-r bg-surface-base flex flex-col" style={{ borderColor: 'var(--color-border)' }}>
-              <button
-                onClick={() => setActiveTab('general')}
-                className={`p-4 text-left text-sm font-bold transition-all ${activeTab === 'general' ? 'text-brand-teal bg-brand-teal/5' : 'text-luxury-ink/60 hover:text-luxury-ink hover:bg-surface-soft'}`}
-              >
-                General
-              </button>
-              <button
-                onClick={() => setActiveTab('account')}
-                className={`p-4 text-left text-sm font-bold transition-all ${activeTab === 'account' ? 'text-brand-teal bg-brand-teal/5' : 'text-luxury-ink/60 hover:text-luxury-ink hover:bg-surface-soft'}`}
-              >
-                Account
-              </button>
-              <button
-                onClick={() => setActiveTab('blocked')}
-                className={`p-4 text-left text-sm font-bold transition-all ${activeTab === 'blocked' ? 'text-brand-teal bg-brand-teal/5' : 'text-luxury-ink/60 hover:text-luxury-ink hover:bg-surface-soft'}`}
-              >
-                Blocked Users
-              </button>
+            <div className="w-[140px] sm:w-[200px] shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
+              {[
+                { id: 'general', label: 'General', icon: Settings },
+                { id: 'account', label: 'Account', icon: User },
+                { id: 'saved', label: 'Saved Posts', icon: Bookmark },
+                { id: 'blocked', label: 'Blocked', icon: ShieldAlert },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all relative overflow-hidden group ${activeTab === tab.id ? 'text-brand-teal bg-brand-teal/10' : 'text-luxury-ink/60 hover:text-luxury-ink hover:bg-surface-soft'}`}
+                >
+                  <tab.icon size={16} className={`transition-colors ${activeTab === tab.id ? 'text-brand-teal' : 'text-luxury-ink/40 group-hover:text-luxury-ink'}`} />
+                  <span className="relative z-10">{tab.label}</span>
+                  {activeTab === tab.id && (
+                    <motion.div layoutId="activeTabIndicator" className="absolute inset-0 bg-brand-teal/5" />
+                  )}
+                </button>
+              ))}
             </div>
 
             {/* Content */}
@@ -307,7 +345,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                         <button
                           type="submit"
                           disabled={isChangingUsername || !newUsername.trim()}
-                          className="px-4 py-2 bg-brand-teal text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors"
+                          className="px-4 py-2 bg-brand-teal text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors shrink-0 whitespace-nowrap"
                         >
                           {isChangingUsername ? 'Saving...' : 'Update'}
                         </button>
@@ -334,7 +372,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                         <button
                           type="submit"
                           disabled={isChangingPersona || !personaName.trim()}
-                          className="px-4 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors"
+                          className="px-4 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors shrink-0 whitespace-nowrap"
                         >
                           {isChangingPersona ? 'Saving...' : 'Save Persona'}
                         </button>
@@ -345,25 +383,25 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
               )}
 
               {activeTab === 'blocked' && (
-                <div>
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="h-full flex flex-col">
                   <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest flex items-center gap-2">
                     <ShieldAlert size={16} className="text-red-500" /> Blocked Users
                   </h3>
                   
                   {loadingBlocked ? (
-                    <div className="py-8 text-center">
+                    <div className="py-8 text-center flex-1">
                       <Loader2 size={24} className="animate-spin text-luxury-ink/20 mx-auto" />
                     </div>
                   ) : blockedUsers.length === 0 ? (
-                    <div className="py-8 text-center border-2 border-dashed rounded-xl" style={{ borderColor: 'var(--color-border)' }}>
+                    <div className="py-8 text-center border-2 border-dashed rounded-xl flex-1 flex flex-col items-center justify-center" style={{ borderColor: 'var(--color-border)' }}>
                       <p className="text-sm text-luxury-ink/40 font-medium">You haven't blocked anyone.</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 flex-1 overflow-y-auto pr-2">
                       {blockedUsers.map(u => (
-                        <div key={u.id} className="flex items-center justify-between p-3 rounded-xl border bg-surface-soft/30" style={{ borderColor: 'var(--color-border)' }}>
+                        <div key={u.id} className="flex items-center justify-between p-3 rounded-xl border bg-surface-soft/30 hover:bg-surface-soft/60 transition-colors" style={{ borderColor: 'var(--color-border)' }}>
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-surface-base flex items-center justify-center overflow-hidden">
+                            <div className="w-10 h-10 rounded-full bg-surface-base flex items-center justify-center overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
                               {u.profilePicture ? (
                                 <img src={u.profilePicture} alt="" className="w-full h-full object-cover" />
                               ) : (
@@ -386,7 +424,57 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                       ))}
                     </div>
                   )}
-                </div>
+                </motion.div>
+              )}
+
+              {activeTab === 'saved' && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="h-full flex flex-col">
+                  <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest flex items-center gap-2">
+                    <Bookmark size={16} className="text-brand-teal" /> Saved Posts
+                  </h3>
+                  
+                  {loadingSaved ? (
+                    <div className="py-8 text-center flex-1">
+                      <Loader2 size={24} className="animate-spin text-luxury-ink/20 mx-auto" />
+                    </div>
+                  ) : savedPosts.length === 0 ? (
+                    <div className="py-8 text-center border-2 border-dashed rounded-xl flex-1 flex flex-col items-center justify-center" style={{ borderColor: 'var(--color-border)' }}>
+                      <p className="text-sm text-luxury-ink/40 font-medium">You haven't saved any posts yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 flex-1 overflow-y-auto pr-2">
+                      {savedPosts.map(post => (
+                        <div key={post.id} className="p-4 rounded-xl border bg-surface-base hover:shadow-md transition-all group flex flex-col" style={{ borderColor: 'var(--color-border)' }}>
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="flex-1">
+                              <h4 className="text-sm font-bold text-luxury-ink line-clamp-1">{post.title}</h4>
+                              {post.content && (
+                                <p className="text-xs text-luxury-ink/60 line-clamp-2 mt-1">{post.content}</p>
+                              )}
+                            </div>
+                            {post.imageUrls?.[0] && (
+                              <img src={post.imageUrls[0]} alt="" className="w-12 h-12 rounded-lg object-cover border" style={{ borderColor: 'var(--color-border)' }} />
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between mt-4">
+                            <span className="text-[10px] font-bold text-luxury-ink/40 uppercase tracking-widest">
+                              {post.authorName} • {post.type}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleUnsave(post.saveDocId)}
+                                className="p-1.5 text-luxury-ink/40 hover:text-brand-pink hover:bg-brand-pink/10 rounded-lg transition-colors"
+                                title="Remove from saved"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
               )}
 
               {activeTab === 'support' && (

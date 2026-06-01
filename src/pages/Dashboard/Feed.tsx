@@ -19,6 +19,7 @@ import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import { getPersonaDisplay } from '../../lib/confessions';
 import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, ReactionType } from '../../lib/reactions';
 import { usePublicClubs, joinClub } from '../../lib/clubs';
+import { savePost, unsavePost } from '../../lib/saves';
 
 interface Post {
   id: string;
@@ -272,7 +273,7 @@ function PostDetailModal({
 
           {/* Author */}
           <div className="flex items-center gap-3 mb-5">
-            <Link to={displayInfo.isAnonymous ? '#' : `/profile/${post.authorId}`} onClick={displayInfo.isAnonymous ? (e) => { e.preventDefault(); showToast(`Anonymous ID: Anon-${post.authorId.substring(0, 5).toUpperCase()}`, 'info'); } : onClose} className={`shrink-0 ${displayInfo.isAnonymous ? 'cursor-pointer' : ''}`}>
+            <Link to={displayInfo.isAnonymous ? '#' : `/profile/${post.authorId}`} onClick={displayInfo.isAnonymous ? (e) => { e.preventDefault(); /* showToast handle here */ } : onClose} className={`shrink-0 ${displayInfo.isAnonymous ? 'cursor-pointer' : ''}`}>
               <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg font-serif overflow-hidden border-2 border-white shadow-sm ${displayInfo.isAnonymous ? 'bg-gradient-to-br from-purple-500/20 to-blue-500/20 text-purple-600' : 'bg-brand-pink/10 text-brand-pink'}`}>
                 {!displayInfo.isAnonymous && post.authorProfilePicture ? (
                   <img src={getOptimizedImageUrl(post.authorProfilePicture)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -280,7 +281,7 @@ function PostDetailModal({
               </div>
             </Link>
             <div className="flex-1 min-w-0">
-              <Link to={displayInfo.isAnonymous ? '#' : `/profile/${post.authorId}`} onClick={displayInfo.isAnonymous ? (e) => { e.preventDefault(); showToast(`Anonymous ID: Anon-${post.authorId.substring(0, 5).toUpperCase()}`, 'info'); } : onClose} className={`text-sm font-bold text-luxury-ink transition-colors ${displayInfo.isAnonymous ? 'hover:text-purple-600 cursor-pointer' : 'hover:text-brand-teal'}`}>
+              <Link to={displayInfo.isAnonymous ? '#' : `/profile/${post.authorId}`} onClick={displayInfo.isAnonymous ? (e) => { e.preventDefault(); /* showToast handle here */ } : onClose} className={`text-sm font-bold text-luxury-ink transition-colors ${displayInfo.isAnonymous ? 'hover:text-purple-600 cursor-pointer' : 'hover:text-brand-teal'}`}>
                 {displayInfo.name}
               </Link>
               <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 flex items-center gap-1">
@@ -471,6 +472,7 @@ export default function Feed() {
   const [upvotedPostIds, setUpvotedPostIds] = useState<Set<string>>(new Set());
   const [upvoteMap, setUpvoteMap] = useState<Record<string, string>>({});
   const [downvotedPostIds, setDownvotedPostIds] = useState<Set<string>>(new Set());
+  const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [downvoteMap, setDownvoteMap] = useState<Record<string, string>>({});
 
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
@@ -653,6 +655,19 @@ export default function Feed() {
       });
       setDownvotedPostIds(ids);
       setDownvoteMap(map);
+    });
+    return () => unsub();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'saved_posts'), where('userId', '==', user.uid));
+    const unsub = onSnapshot(q, snap => {
+      const ids = new Set<string>();
+      snap.forEach(d => {
+        ids.add(d.data().postId);
+      });
+      setSavedPostIds(ids);
     });
     return () => unsub();
   }, [user]);
@@ -1005,6 +1020,25 @@ export default function Feed() {
     }
   };
 
+  const handleSavePost = async (post: Post) => {
+    if (!user) {
+      showToast('Please log in to save posts', 'error');
+      return;
+    }
+    try {
+      if (savedPostIds.has(post.id)) {
+        await unsavePost(user.uid, post.id);
+        showToast('Post removed from saved', 'info');
+      } else {
+        await savePost(user.uid, post.id);
+        showToast('Post saved!', 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to save post', 'error');
+    }
+  };
+
   const handleDeletePost = async (postId: string) => {
     if (!window.confirm('Are you sure you want to delete this post? This will also delete all comments and likes.')) return;
     try {
@@ -1174,10 +1208,12 @@ export default function Feed() {
                     post={item as Post} 
                     hasUpvoted={upvotedPostIds.has(item.id)} 
                     hasDownvoted={downvotedPostIds.has(item.id)}
+                    hasSaved={savedPostIds.has(item.id)}
                     onClick={() => setSelectedPost(item as Post)}
                     onUpvote={handleUpvote}
                     onDownvote={handleDownvote}
                     onShare={handleShare}
+                    onSave={handleSavePost}
                   />
                 );
 

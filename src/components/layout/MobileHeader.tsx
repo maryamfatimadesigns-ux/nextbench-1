@@ -33,7 +33,7 @@ export default function MobileHeader() {
   }
 
   return (
-    <div className="md:hidden nav-glass border-b px-4 py-3 flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
+    <div className="md:hidden sticky top-0 z-[60] nav-glass border-b px-4 py-3 flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
       <Link to="/" className="flex items-center gap-2">
         <img src="/logo.png" alt="Logo" className="h-6 w-auto" />
         <span className="text-xl font-bold tracking-tight text-luxury-ink">nextbench</span>
