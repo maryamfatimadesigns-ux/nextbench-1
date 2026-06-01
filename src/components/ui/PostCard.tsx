@@ -35,10 +35,12 @@ interface PostCardProps {
   post: Post;
   hasUpvoted: boolean;
   hasDownvoted?: boolean;
+  hasSaved?: boolean;
   onClick: () => void;
   onUpvote?: (post: Post) => void;
   onDownvote?: (post: Post) => void;
   onShare?: (post: Post) => void;
+  onSave?: (post: Post) => void;
 }
 
 function timeAgo(date: any): string {
@@ -53,7 +55,7 @@ function timeAgo(date: any): string {
   return date.toDate().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export default function PostCard({ post, hasUpvoted, hasDownvoted, onClick, onUpvote, onDownvote, onShare }: PostCardProps) {
+export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onClick, onUpvote, onDownvote, onShare, onSave }: PostCardProps) {
   const { showToast } = useToast();
   const postImageUrls = post.imageUrls && post.imageUrls.length > 0
     ? post.imageUrls
@@ -176,6 +178,12 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, onClick, onUp
               className="flex items-center text-luxury-ink/40 hover:text-luxury-ink/60 transition-colors"
             >
               <Share2 size={16} />
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); onSave?.(post); }}
+              className={`flex items-center transition-colors ${hasSaved ? 'text-brand-teal' : 'text-luxury-ink/40 hover:text-brand-teal'}`}
+            >
+              <Bookmark size={16} className={hasSaved ? 'fill-brand-teal' : ''} />
             </button>
           </div>
           <div className="flex items-center gap-3">
