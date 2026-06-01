@@ -251,7 +251,7 @@ export default function ChatList() {
   return (
     <div className="pb-20 max-w-2xl mx-auto min-h-screen">
       {/* Header and Tabs */}
-      <div className="sticky top-0 z-40 px-4 md:px-0 pt-6 pb-0 border-b border-luxury-ink/5" style={{ background: 'var(--color-surface-card)' }}>
+      <div className="sticky top-0 z-40 px-4 md:px-0 pt-6 pb-0 border-b border-luxury-ink/5 bg-surface-base z-10">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-3xl font-bold text-luxury-ink">
             {activeTab === 'chats' ? 'Chats' : 'Clubs'}
