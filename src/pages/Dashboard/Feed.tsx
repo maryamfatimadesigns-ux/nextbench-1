@@ -127,8 +127,10 @@ function PostDetailModal({ post, onClose, onUpvote, hasUpvoted, onShare, onDelet
         style={{ background: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Image Section */}
-        {postImageUrls.length > 0 && (
+        {/* Scrollable Container */}
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {/* Image Section */}
+          {postImageUrls.length > 0 && (
           <div className="relative bg-luxury-ink/5 flex-shrink-0">
             <img
               src={getOptimizedImageUrl(postImageUrls[currentImageIndex])}
@@ -156,7 +158,7 @@ function PostDetailModal({ post, onClose, onUpvote, hasUpvoted, onShare, onDelet
         )}
 
         {/* Content Section */}
-        <div className="flex-1 overflow-y-auto p-6 md:p-8">
+        <div className="flex-1 p-6 md:p-8">
           {/* No image? show close button here */}
           {postImageUrls.length === 0 && (
             <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-surface-base text-luxury-ink/40 rounded-full hover:bg-surface-soft hover:text-luxury-ink transition-all">
@@ -266,6 +268,7 @@ function PostDetailModal({ post, onClose, onUpvote, hasUpvoted, onShare, onDelet
               </button>
             </form>
           </div>
+        </div>
         </div>
 
         {/* Action Bar */}
