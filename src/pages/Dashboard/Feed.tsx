@@ -1470,35 +1470,43 @@ function HorizontalDiscoverClubs() {
   if (loading || clubs.length === 0) return null;
 
   return (
-    <div className="py-6 my-2 border-y border-luxury-ink/5 bg-surface-soft/20 -mx-4 px-4 sm:mx-0 sm:rounded-3xl sm:border sm:px-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Users size={18} className="text-brand-teal" />
-          <h3 className="text-sm font-bold text-luxury-ink">Discover Clubs</h3>
+    <div className="py-8 my-2 border-y border-luxury-ink/5 bg-gradient-to-r from-surface-soft/40 via-transparent to-surface-soft/40 -mx-4 px-4 sm:mx-0 sm:border-x-0 sm:px-0 relative overflow-hidden">
+      {/* Subtle decorative glow */}
+      <div className="absolute top-0 left-1/4 w-1/2 h-px bg-gradient-to-r from-transparent via-brand-teal/20 to-transparent"></div>
+      
+      <div className="flex items-center justify-between mb-6 px-2">
+        <div className="flex flex-col">
+          <h3 className="text-[15px] font-semibold text-luxury-ink flex items-center gap-2">
+            <Users size={16} className="text-brand-teal" />
+            Clubs for you
+          </h3>
+          <p className="text-[13px] text-luxury-ink/40 mt-1">Find your community on Nextbench</p>
         </div>
       </div>
-      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+      
+      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 px-2 snap-x">
         {clubs.map((club) => (
           <Link 
             key={club.id} 
             to={`/club/${club.id}`} 
-            className="flex-shrink-0 w-48 theme-card p-4 rounded-2xl border border-luxury-ink/5 hover:border-brand-teal/30 transition-colors group flex flex-col"
+            className="snap-start flex-shrink-0 w-[160px] bg-white/70 backdrop-blur-sm rounded-2xl p-4 border border-luxury-ink/5 hover:border-brand-teal/20 transition-all group flex flex-col items-center text-center shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:shadow-[0_8px_20px_-4px_rgba(0,0,0,0.08)] hover:-translate-y-1"
           >
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-teal/15 to-brand-pink/15 flex items-center justify-center overflow-hidden mb-3 border border-luxury-ink/5">
+            <div className="w-16 h-16 rounded-full bg-surface-soft flex items-center justify-center overflow-hidden mb-3 border-[3px] border-white shadow-sm ring-1 ring-luxury-ink/5">
               {club.avatar ? (
-                <img src={getOptimizedImageUrl(club.avatar)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                <img src={getOptimizedImageUrl(club.avatar)} alt="" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
               ) : (
-                <Users size={20} className="text-brand-teal" />
+                <Users size={20} className="text-brand-teal/50" />
               )}
             </div>
-            <p className="text-sm font-bold text-luxury-ink truncate group-hover:text-brand-teal transition-colors mb-1">{club.name}</p>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 mb-4">{club.memberCount} members</p>
+            <p className="text-[14px] font-semibold text-luxury-ink truncate w-full group-hover:text-brand-teal transition-colors mb-1">{club.name}</p>
+            <p className="text-[12px] text-luxury-ink/40 mb-4">{club.memberCount} members</p>
+            
             <button
               onClick={(e) => handleJoin(e, club.id)}
               disabled={joiningId === club.id}
-              className="mt-auto w-full py-2 bg-brand-teal text-white rounded-xl text-xs font-bold hover:bg-brand-pink transition-colors shadow-sm disabled:opacity-50"
+              className="mt-auto w-full py-1.5 rounded-full border border-luxury-ink/10 text-[13px] font-semibold text-luxury-ink/70 hover:bg-brand-teal hover:text-white hover:border-brand-teal transition-all disabled:opacity-50 flex items-center justify-center"
             >
-              {joiningId === club.id ? 'Joining...' : 'Join Club'}
+              {joiningId === club.id ? 'Joining' : 'Join'}
             </button>
           </Link>
         ))}
