@@ -215,7 +215,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
           initial={{ scale: 0.95, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 20 }}
-          className="rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+          className="rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
           style={{ background: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
           onClick={e => e.stopPropagation()}
         >
@@ -227,9 +227,9 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
             </button>
           </div>
 
-          <div className="flex flex-1 overflow-hidden min-h-[400px]">
+          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-[400px]">
             {/* Sidebar */}
-            <div className="w-[160px] sm:w-[200px] border-r bg-surface-base flex flex-col p-2 space-y-1" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="w-[140px] sm:w-[200px] shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
               {[
                 { id: 'general', label: 'General', icon: Settings },
                 { id: 'account', label: 'Account', icon: User },
@@ -345,7 +345,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                         <button
                           type="submit"
                           disabled={isChangingUsername || !newUsername.trim()}
-                          className="px-4 py-2 bg-brand-teal text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors"
+                          className="px-4 py-2 bg-brand-teal text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors shrink-0 whitespace-nowrap"
                         >
                           {isChangingUsername ? 'Saving...' : 'Update'}
                         </button>
@@ -372,7 +372,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                         <button
                           type="submit"
                           disabled={isChangingPersona || !personaName.trim()}
-                          className="px-4 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors"
+                          className="px-4 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold disabled:opacity-50 transition-colors shrink-0 whitespace-nowrap"
                         >
                           {isChangingPersona ? 'Saving...' : 'Save Persona'}
                         </button>
