@@ -89,7 +89,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
-        className="post-card-clean cursor-pointer"
+        className={`post-card-clean cursor-pointer ${post.type === 'confession' ? 'is-confession' : ''}`}
         onClick={onClick}
       >
         {/* Author Row */}
@@ -133,7 +133,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
             <img
               src={getOptimizedImageUrl(postImageUrls[0])}
               alt={post.title}
-              className="w-full max-h-[400px] object-cover"
+              className="w-full max-h-[400px] object-contain bg-luxury-ink/5"
               referrerPolicy="no-referrer"
             />
             {postImageUrls.length > 1 && (

@@ -67,7 +67,7 @@ export const POST_TYPES = [
   { id: 'info', label: 'School Info' },
   { id: 'notes', label: 'Notes' },
   { id: 'event', label: 'Interschool Event' },
-  { id: 'confession', label: 'Confession' },
+  { id: 'confession', label: 'Anonymous Post' },
   { id: 'others', label: 'Others' },
 ];
 
@@ -538,6 +538,7 @@ export default function Feed() {
             // Prioritize real-time user data, fallback to denormalized data
             authorName: authorData.name || data.authorName || 'Unknown User',
             authorProfilePicture: authorData.profilePicture || data.authorProfilePicture || null,
+            school: authorData.school || data.school || 'Unknown School',
           } as Post);
         });
         setRawPosts(fetchedPosts);
@@ -1378,7 +1379,7 @@ export default function Feed() {
                       </span>
                       {selectedPostType === 'confession' && !isAnonymous && (
                         <span className="text-[11px] text-amber-500 font-semibold flex items-center gap-1">
-                          Posting publicly in confessions!
+                          Posting publicly in anonymous posts!
                         </span>
                       )}
                       {selectedPostType === 'confession' && isAnonymous && !userData?.anonymousPersonaName && (
