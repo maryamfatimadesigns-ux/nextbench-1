@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Star, Package, Settings, MapPin, X, Smartphone, ExternalLink, Trash2, Camera, MessageSquare, Handshake, Heart, MoreHorizontal, Ban, Flag, Copy, Check, Edit2, Building2, Globe } from 'lucide-react';
+import { ShieldCheck, Star, Package, Settings, MapPin, X, Smartphone, ExternalLink, Trash2, Camera, MessageSquare, Handshake, Heart, MoreHorizontal, Ban, Flag, Copy, Check, Edit2, Building2, Globe, Eye } from 'lucide-react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/AuthContext';
 import React, { useState, useEffect, useRef } from 'react';
@@ -65,7 +65,14 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
-  useScrollLock(isEditing || showFollowersModal || showFollowingModal || !!selectedPost || showUsernameSetup || showReportModal || showSettingsModal);
+  // Profile Picture Menu & Modal system
+  const [showPfpMenu, setShowPfpMenu] = useState(false);
+  const [showPfpLightbox, setShowPfpLightbox] = useState(false);
+  const [showPfpUploadModal, setShowPfpUploadModal] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const pfpMenuRef = useRef<HTMLDivElement>(null);
+
+  useScrollLock(isEditing || showFollowersModal || showFollowingModal || !!selectedPost || showUsernameSetup || showReportModal || showSettingsModal || showPfpLightbox || showPfpUploadModal);
 
   // Determine the actual userId to display
   const effectiveUserId = usernameResolvedUserId || routeUserId;
@@ -77,11 +84,14 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   // followerIds / followingIds are fetched on-demand when modals open
   const { isBlocked, isBlockedBy } = useBlockStatus(targetUserId);
 
-  // Close more menu on outside click
+  // Close menus on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
         setShowMoreMenu(false);
+      }
+      if (pfpMenuRef.current && !pfpMenuRef.current.contains(e.target as Node)) {
+        setShowPfpMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
@@ -93,6 +103,28 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
+
+  // Clipboard paste listener for profile picture upload modal
+  useEffect(() => {
+    if (!showPfpUploadModal) return;
+
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) {
+            uploadPfpFile(file);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [showPfpUploadModal]);
 
   // Show username setup prompt for own profile without username
   useEffect(() => {
@@ -183,9 +215,8 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`); }
   };
 
-  const handleProfilePictureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.[0] || !user || !isOwnProfile) return;
-    let file = e.target.files[0];
+  const uploadPfpFile = async (file: File) => {
+    if (!user || !isOwnProfile) return;
     
     const isHeic = isHeicFile(file);
     const isStandardImage = file.type.startsWith('image/');
@@ -199,29 +230,55 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     try {
       await user.getIdToken(true);
       
+      let finalFile = file;
       if (isHeic) {
         showToast('Converting HEIC image...', 'info');
-        file = await convertHeicToJpeg(file);
+        finalFile = await convertHeicToJpeg(file);
       }
       
-      if (file.size > 5 * 1024 * 1024) {
+      if (finalFile.size > 5 * 1024 * 1024) {
         showToast('Image must be less than 5MB', 'error');
         setIsUploadingPic(false);
         return;
       }
       
-      const imageUrl = await uploadProfilePicture(file, user.uid);
+      const imageUrl = await uploadProfilePicture(finalFile, user.uid);
       await updateDoc(doc(db, 'users', user.uid), {
         profilePicture: imageUrl,
         updatedAt: serverTimestamp()
       });
       showToast('Profile picture updated!', 'success');
+      setShowPfpUploadModal(false);
     } catch (err: any) {
       console.error("Profile picture upload error:", err);
       showToast(`Upload failed: ${err.message || 'Unknown error'}`, 'error');
     } finally {
       setIsUploadingPic(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleProfilePictureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    await uploadPfpFile(e.target.files[0]);
+  };
+
+  const handleRemoveProfilePicture = async () => {
+    if (!user || !isOwnProfile) return;
+    if (!confirm('Are you sure you want to remove your profile picture?')) return;
+    setIsUploadingPic(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        profilePicture: null,
+        updatedAt: serverTimestamp()
+      });
+      showToast('Profile picture removed!', 'success');
+      setShowPfpMenu(false);
+    } catch (err: any) {
+      console.error("Profile picture delete error:", err);
+      showToast('Failed to remove profile picture', 'error');
+    } finally {
+      setIsUploadingPic(false);
     }
   };
 
@@ -430,13 +487,23 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       <div className="flex flex-col md:flex-row items-start md:items-center gap-8 mb-16 relative">
         {/* Profile picture with gradient ring */}
         <div className="relative shrink-0 group">
-          <div className="w-28 h-28 md:w-36 md:h-36 rounded-full overflow-hidden flex items-center justify-center text-luxury-ink font-serif text-4xl md:text-5xl relative gradient-border" style={{ background: 'var(--color-surface-soft)' }}>
+          <div 
+            onClick={() => {
+              if (isOwnProfile && !isUploadingPic) {
+                setShowPfpMenu(true);
+              } else if (!isOwnProfile && profileUser.profilePicture) {
+                setShowPfpLightbox(true);
+              }
+            }}
+            className="w-28 h-28 md:w-36 md:h-36 rounded-full overflow-hidden flex items-center justify-center text-luxury-ink font-serif text-4xl md:text-5xl relative gradient-border cursor-pointer transition-all duration-300 hover:scale-[1.02]" 
+            style={{ background: 'var(--color-surface-soft)' }}
+          >
             {profileUser.profilePicture ? (
               <img src={getOptimizedImageUrl(profileUser.profilePicture)} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : firstName[0]?.toUpperCase()}
             
             {isOwnProfile && (
-              <div onClick={() => !isUploadingPic && fileInputRef.current?.click()} className="absolute inset-0 bg-luxury-ink/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-sm">
+              <div className="absolute inset-0 bg-luxury-ink/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                 {isUploadingPic ? (
                   <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
@@ -445,6 +512,46 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
               </div>
             )}
           </div>
+          
+          {/* Custom profile picture dropdown menu */}
+          {showPfpMenu && isOwnProfile && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -5 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              ref={pfpMenuRef}
+              className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-2xl shadow-2xl overflow-hidden z-50 border"
+              style={{ background: 'var(--color-surface-card)', borderColor: 'var(--color-border)' }}
+            >
+              {profileUser.profilePicture && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowPfpLightbox(true); setShowPfpMenu(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-4 text-sm font-semibold text-luxury-ink hover:bg-surface-soft transition-colors text-left"
+                >
+                  <Eye size={16} className="text-brand-teal" />
+                  View Photo
+                </button>
+              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowPfpUploadModal(true); setShowPfpMenu(false); }}
+                className={`w-full flex items-center gap-3 px-5 py-4 text-sm font-semibold text-luxury-ink hover:bg-surface-soft transition-colors text-left ${profileUser.profilePicture ? 'border-t' : ''}`}
+                style={{ borderColor: 'var(--color-border)' }}
+              >
+                <Camera size={16} className="text-brand-pink" />
+                {profileUser.profilePicture ? 'Change Photo' : 'Upload Photo'}
+              </button>
+              {profileUser.profilePicture && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleRemoveProfilePicture(); }}
+                  className="w-full flex items-center gap-3 px-5 py-4 text-sm font-semibold text-red-500 hover:bg-red-500/5 transition-colors text-left border-t"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  <Trash2 size={16} />
+                  Remove Photo
+                </button>
+              )}
+            </motion.div>
+          )}
+
           {isOwnProfile && (
             <input type="file" ref={fileInputRef} onChange={handleProfilePictureUpload} accept="image/*,.heic,.heif" className="hidden" />
           )}
@@ -883,6 +990,109 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                       </Link>
                     ))}
                   </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Profile Picture Lightbox Modal */}
+      <AnimatePresence>
+        {showPfpLightbox && profileUser?.profilePicture && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 backdrop-blur-md"
+            style={{ background: 'rgba(0, 0, 0, 0.85)' }}
+            onClick={() => setShowPfpLightbox(false)}
+          >
+            <button
+              onClick={() => setShowPfpLightbox(false)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors z-[120]"
+            >
+              <X size={24} />
+            </button>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full flex items-center justify-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img
+                src={getOptimizedImageUrl(profileUser.profilePicture)}
+                alt={profileUser.name}
+                className="w-72 h-72 sm:w-96 sm:h-96 md:w-[450px] md:h-[450px] rounded-3xl object-cover shadow-2xl select-none border-4 border-white/10"
+                referrerPolicy="no-referrer"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile Picture Upload Modal */}
+      <AnimatePresence>
+        {showPfpUploadModal && isOwnProfile && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm"
+            style={{ background: 'var(--color-overlay)' }}
+            onClick={() => { if (!isUploadingPic) setShowPfpUploadModal(false); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="rounded-3xl w-full max-w-md p-8 relative shadow-2xl overflow-hidden"
+              style={{ background: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setShowPfpUploadModal(false)}
+                disabled={isUploadingPic}
+                className="absolute top-4 right-4 p-2 text-luxury-ink/40 hover:text-luxury-ink rounded-full transition-colors disabled:opacity-30"
+              >
+                <X size={20} />
+              </button>
+              <h3 className="text-xl font-bold text-luxury-ink mb-2">Change Profile Picture</h3>
+              <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/40 mb-6">Select a file, drag & drop, or paste from clipboard.</p>
+
+              {/* Drag and Drop Zone */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  setIsDragOver(false);
+                  if (isUploadingPic) return;
+                  const files = e.dataTransfer.files;
+                  if (files && files.length > 0) {
+                    await uploadPfpFile(files[0]);
+                  }
+                }}
+                onClick={() => { if (!isUploadingPic) fileInputRef.current?.click(); }}
+                className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 relative ${
+                  isDragOver ? 'border-brand-pink bg-brand-pink/5 scale-[1.01]' : 'border-luxury-ink/10 hover:border-brand-teal hover:bg-brand-teal/5'
+                }`}
+                style={{ height: '200px' }}
+              >
+                {isUploadingPic ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-10 h-10 border-2 border-brand-teal border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs font-bold uppercase tracking-widest text-brand-teal">Uploading Picture...</p>
+                  </div>
+                ) : (
+                  <>
+                    <Camera className={`mb-3 transition-colors ${isDragOver ? 'text-brand-pink' : 'text-luxury-ink/30'}`} size={36} />
+                    <p className="text-sm font-bold text-luxury-ink mb-1">Drag and drop your image here</p>
+                    <p className="text-xs text-luxury-ink/40 mb-4">or click to browse from device</p>
+                    <div className="bg-luxury-ink/5 border border-luxury-ink/10 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest text-luxury-ink/50">
+                      Supports Ctrl + V to Paste
+                    </div>
+                  </>
                 )}
               </div>
             </motion.div>
