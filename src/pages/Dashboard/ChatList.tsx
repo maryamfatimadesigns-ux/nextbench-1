@@ -39,7 +39,6 @@ export default function ChatList() {
   const [creatingDM, setCreatingDM] = useState(false);
 
   // Clubs state
-  const [activeTab, setActiveTab] = useState<'chats' | 'clubs'>('chats');
   const [showCreateClub, setShowCreateClub] = useState(false);
   const [clubName, setClubName] = useState('');
   const [clubDescription, setClubDescription] = useState('');
@@ -232,21 +231,24 @@ export default function ChatList() {
 
   const [chatSearchTerm, setChatSearchTerm] = useState('');
 
-  const filteredChatRooms = chatRooms.filter((room) => {
-    const otherUserId = room.participants.find(id => id !== user?.uid);
-    if (!otherUserId) return true;
-    if (blockedIds.has(otherUserId) || blockedByIds.has(otherUserId)) return false;
-    
-    if (chatSearchTerm.trim()) {
-      const name = room.otherUser?.name?.toLowerCase() || '';
-      return name.includes(chatSearchTerm.toLowerCase());
+  const allItems = [
+    ...chatRooms.map(r => ({ type: 'chat' as const, data: r, updated: r.updatedAt?.toMillis?.() || 0 })),
+    ...clubs.map(c => ({ type: 'club' as const, data: c, updated: c.updatedAt?.toMillis?.() || 0 }))
+  ].sort((a, b) => b.updated - a.updated);
+
+  const filteredItems = allItems.filter(item => {
+    const term = chatSearchTerm.trim().toLowerCase();
+    if (item.type === 'chat') {
+      const room = item.data as ChatRoom;
+      const otherUserId = room.participants.find(id => id !== user?.uid);
+      if (otherUserId && (blockedIds.has(otherUserId) || blockedByIds.has(otherUserId))) return false;
+      if (term) return (room.otherUser?.name?.toLowerCase() || '').includes(term);
+    } else {
+      const club = item.data as ClubData;
+      if (term) return club.name.toLowerCase().includes(term);
     }
     return true;
   });
-
-  const filteredClubs = chatSearchTerm.trim()
-    ? clubs.filter((c) => c.name.toLowerCase().includes(chatSearchTerm.toLowerCase()))
-    : clubs;
 
   return (
     <div className="pb-20 max-w-2xl mx-auto min-h-screen">
@@ -254,52 +256,22 @@ export default function ChatList() {
       <div className="sticky top-0 z-40 px-4 md:px-0 pt-6 pb-0 border-b border-luxury-ink/5 bg-surface-base z-10">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-3xl font-bold text-luxury-ink">
-            {activeTab === 'chats' ? 'Chats' : 'Clubs'}
+            Messages
           </h1>
           <button
-            onClick={() => activeTab === 'chats' ? setShowNewDM(true) : setShowCreateClub(true)}
+            onClick={() => setShowNewDM(true)}
             className="p-2 text-brand-teal bg-brand-teal/10 rounded-full hover:bg-brand-teal/20 transition-colors"
           >
             <Plus size={24} />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-0 mb-0">
-          <button
-            onClick={() => setActiveTab('chats')}
-            className={`flex-1 pb-3 text-sm font-bold uppercase tracking-widest transition-colors relative ${
-              activeTab === 'chats' ? 'text-luxury-ink' : 'text-luxury-ink/30 hover:text-luxury-ink/50'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <MessageSquare size={16} /> Chats
-            </div>
-            {activeTab === 'chats' && (
-              <motion.div layoutId="chatTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink rounded-full" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('clubs')}
-            className={`flex-1 pb-3 text-sm font-bold uppercase tracking-widest transition-colors relative ${
-              activeTab === 'clubs' ? 'text-luxury-ink' : 'text-luxury-ink/30 hover:text-luxury-ink/50'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <Users size={16} /> Clubs
-            </div>
-            {activeTab === 'clubs' && (
-              <motion.div layoutId="chatTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink rounded-full" />
-            )}
-          </button>
-        </div>
-
         {/* Search */}
-        <div className="relative pt-3 pb-3">
+        <div className="relative pb-3">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-luxury-ink/40 mt-0" size={18} style={{ top: 'calc(50% + 0px)' }} />
           <input 
             type="text" 
-            placeholder={activeTab === 'chats' ? 'Search chats' : 'Search clubs'}
+            placeholder="Search messages or clubs"
             value={chatSearchTerm}
             onChange={(e) => setChatSearchTerm(e.target.value)}
             className="w-full bg-surface-soft border-none rounded-xl py-2.5 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-all text-sm font-medium"
@@ -309,101 +281,79 @@ export default function ChatList() {
 
       {/* Content */}
       <div className="mt-2">
-        {activeTab === 'chats' ? (
-          /* ─── CHATS TAB ─── */
-          <>
-            {loading ? (
-              <div className="py-20 text-center font-serif italic text-luxury-ink/40">Loading messages...</div>
-            ) : filteredChatRooms.length === 0 ? (
-              <div className="py-20 text-center px-4">
-                <div className="w-16 h-16 bg-brand-teal/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <MessageSquare className="text-brand-teal" size={32} />
-                </div>
-                <h3 className="text-xl font-bold text-luxury-ink mb-2">No messages</h3>
-                <p className="text-luxury-ink/50 text-sm mb-6">Start a conversation by searching for someone.</p>
-                <button
-                  onClick={() => setShowNewDM(true)}
-                  className="inline-block bg-luxury-ink text-surface-base px-6 py-3 rounded-full font-bold hover:opacity-80 transition-opacity text-sm"
+        {loading || clubsLoading ? (
+          <div className="py-20 text-center font-serif italic text-luxury-ink/40">Loading messages...</div>
+        ) : filteredItems.length === 0 ? (
+          <div className="py-20 text-center px-4">
+            <div className="w-16 h-16 bg-brand-teal/5 rounded-full flex items-center justify-center mx-auto mb-4">
+              <MessageSquare className="text-brand-teal" size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-luxury-ink mb-2">No messages</h3>
+            <p className="text-luxury-ink/50 text-sm mb-6">Start a conversation or create a club.</p>
+            <button
+              onClick={() => setShowNewDM(true)}
+              className="inline-block bg-luxury-ink text-surface-base px-6 py-3 rounded-full font-bold hover:opacity-80 transition-opacity text-sm"
+            >
+              New Message
+            </button>
+          </div>
+        ) : (
+          filteredItems.map(({ type, data }) => {
+            if (type === 'chat') {
+              const room = data as ChatRoom;
+              const isDM = room.type === 'dm' || !room.productTitle;
+              const isUnread = room.unreadBy?.includes(user?.uid || '');
+              return (
+                <Link 
+                  to={`/chat/${room.id}`} 
+                  state={{ otherUser: room.otherUser, roomData: room }}
+                  key={`chat-${room.id}`}
+                  className="block group px-2 md:px-0"
                 >
-                  New Message
-                </button>
-              </div>
-            ) : (
-              filteredChatRooms.map((room) => {
-                const isDM = room.type === 'dm' || !room.productTitle;
-                const isUnread = room.unreadBy?.includes(user?.uid || '');
-                return (
-                  <Link 
-                    to={`/chat/${room.id}`} 
-                    state={{ otherUser: room.otherUser, roomData: room }}
-                    key={room.id}
-                    className="block group px-2 md:px-0"
-                  >
-                    <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
-                      <div className="relative shrink-0">
-                        <div className="w-14 h-14 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden">
-                          {room.otherUser?.profilePicture ? (
-                            <img src={getOptimizedImageUrl(room.otherUser.profilePicture)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <User size={24} className="text-brand-teal" />
-                          )}
-                        </div>
-                        {room.otherUser?.verified && (
-                          <div className="absolute bottom-0 right-0 bg-brand-teal text-white p-0.5 rounded-full border-2 border-surface-base">
-                            <ShieldCheck size={10} />
-                          </div>
+                  <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
+                    <div className="relative shrink-0">
+                      <div className="w-14 h-14 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden">
+                        {room.otherUser?.profilePicture ? (
+                          <img src={getOptimizedImageUrl(room.otherUser.profilePicture)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <User size={24} className="text-brand-teal" />
                         )}
                       </div>
+                      {room.otherUser?.verified && (
+                        <div className="absolute bottom-0 right-0 bg-brand-teal text-white p-0.5 rounded-full border-2 border-surface-base">
+                          <ShieldCheck size={10} />
+                        </div>
+                      )}
+                    </div>
 
-                      <div className="flex-1 min-w-0 py-1 border-b border-luxury-ink/5 group-hover:border-transparent transition-colors">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <h3 className={`truncate text-base ${isUnread ? 'font-bold text-brand-teal' : 'font-semibold text-luxury-ink'}`}>
-                            {room.otherUser?.name || 'Unknown User'}
-                          </h3>
-                          <span className={`text-xs whitespace-nowrap ml-2 ${isUnread ? 'text-brand-teal font-bold' : 'text-luxury-ink/40'}`}>
-                            {room.updatedAt?.toDate().toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <p className={`text-sm truncate flex-1 ${isUnread ? 'text-luxury-ink font-semibold' : 'text-luxury-ink/60'}`}>
-                            {!isDM && <span className="text-brand-teal font-medium mr-1 text-xs">[{room.productTitle}]</span>}
-                            {room.lastSenderId === user?.uid ? 'You: ' : ''}{room.lastMessage || 'Start the conversation...'}
-                          </p>
-                          {isUnread && (
-                            <div className="w-2.5 h-2.5 bg-brand-teal rounded-full shrink-0 mt-1 shadow-sm"></div>
-                          )}
-                        </div>
+                    <div className="flex-1 min-w-0 py-1 border-b border-luxury-ink/5 group-hover:border-transparent transition-colors">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <h3 className={`truncate text-base ${isUnread ? 'font-bold text-brand-teal' : 'font-semibold text-luxury-ink'}`}>
+                          {room.otherUser?.name || 'Unknown User'}
+                        </h3>
+                        <span className={`text-xs whitespace-nowrap ml-2 ${isUnread ? 'text-brand-teal font-bold' : 'text-luxury-ink/40'}`}>
+                          {room.updatedAt?.toDate()?.toLocaleDateString([], { month: 'short', day: 'numeric' }) || ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <p className={`text-sm truncate flex-1 ${isUnread ? 'text-luxury-ink font-semibold' : 'text-luxury-ink/60'}`}>
+                          {!isDM && <span className="text-brand-teal font-medium mr-1 text-xs">[{room.productTitle}]</span>}
+                          {room.lastSenderId === user?.uid ? 'You: ' : ''}{room.lastMessage || 'Start the conversation...'}
+                        </p>
+                        {isUnread && (
+                          <div className="w-2.5 h-2.5 bg-brand-teal rounded-full shrink-0 mt-1 shadow-sm"></div>
+                        )}
                       </div>
                     </div>
-                  </Link>
-                );
-              })
-            )}
-          </>
-        ) : (
-          /* ─── CLUBS TAB ─── */
-          <>
-            {clubsLoading ? (
-              <div className="py-20 text-center font-serif italic text-luxury-ink/40">Loading clubs...</div>
-            ) : filteredClubs.length === 0 ? (
-              <div className="py-20 text-center px-4">
-                <div className="w-16 h-16 bg-gradient-to-br from-brand-teal/10 to-brand-pink/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Users className="text-brand-teal" size={32} />
-                </div>
-                <h3 className="text-xl font-bold text-luxury-ink mb-2">No clubs yet</h3>
-                <p className="text-luxury-ink/50 text-sm mb-6">Create a club or join one with an invite link.</p>
-                <button
-                  onClick={() => setShowCreateClub(true)}
-                  className="inline-block bg-luxury-ink text-surface-base px-6 py-3 rounded-full font-bold hover:opacity-80 transition-opacity text-sm"
-                >
-                  Create Club
-                </button>
-              </div>
-            ) : (
-              filteredClubs.map((club) => (
+                  </div>
+                </Link>
+              );
+            } else {
+              const club = data as ClubData;
+              return (
                 <Link
                   to={`/club/${club.id}`}
-                  key={club.id}
+                  key={`club-${club.id}`}
                   className="block group px-2 md:px-0"
                 >
                   <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
@@ -447,9 +397,9 @@ export default function ChatList() {
                     </div>
                   </div>
                 </Link>
-              ))
-            )}
-          </>
+              );
+            }
+          })
         )}
       </div>
 
@@ -494,6 +444,19 @@ export default function ChatList() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-4">
+                <button
+                  onClick={() => { setShowNewDM(false); setShowCreateClub(true); }}
+                  className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-surface-soft transition-all text-left mb-2"
+                >
+                  <div className="w-12 h-12 rounded-full bg-brand-teal/10 flex items-center justify-center border border-brand-teal/20 shrink-0">
+                    <Users size={20} className="text-brand-teal" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-luxury-ink text-sm">Create New Club</p>
+                    <p className="text-[10px] text-luxury-ink/40 uppercase tracking-widest mt-0.5">Start a group chat</p>
+                  </div>
+                </button>
+                <div className="h-px bg-luxury-ink/5 my-3 mx-2"></div>
                 {searchingUsers ? (
                   <div className="py-8 text-center">
                     <div className="w-6 h-6 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto" />

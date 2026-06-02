@@ -6,6 +6,7 @@ import { db } from '../../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../lib/ToastContext';
+import { isChatMessageNotification } from '../../lib/notifications';
 
 interface Notification {
   id: string;
@@ -22,6 +23,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   listing_approved: <Package size={20} className="text-brand-mint" />,
   listing_rejected: <Package size={20} className="text-red-400" />,
   new_message: <MessageSquare size={20} className="text-brand-pink" />,
+  new_post: <Bell size={20} className="text-brand-teal" />,
   item_reserved: <Package size={20} className="text-amber-500" />,
   item_sold: <Package size={20} className="text-brand-teal" />,
   new_review: <Star size={20} className="text-yellow-500" />,
