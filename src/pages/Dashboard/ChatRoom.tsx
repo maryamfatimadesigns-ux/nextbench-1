@@ -226,13 +226,17 @@ export default function ChatRoom() {
       if (roomData?.participants) {
         const recipientId = roomData.participants.find((id: string) => id !== user.uid);
         if (recipientId) {
-          createNotification({
-            userId: recipientId,
-            type: 'new_message',
-            title: 'New Message',
-            message: `${userData?.name || 'Someone'} sent you a message: ${messageText || '📷 Image'}`,
-            link: `/chat/${roomId}`
-          });
+          // Only notify if recipient is NOT already reading this chat
+          const recipientIsInChat = !roomData.unreadBy?.includes(recipientId);
+          if (!recipientIsInChat) {
+            createNotification({
+              userId: recipientId,
+              type: 'new_message',
+              title: 'New Message',
+              message: `${userData?.name || 'Someone'} sent you a message: ${messageText || '📷 Image'}`,
+              link: `/chat/${roomId}`
+            });
+          }
         }
       }
     } catch (err) {
