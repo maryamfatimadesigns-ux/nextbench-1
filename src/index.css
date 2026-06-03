@@ -149,6 +149,18 @@
   scrollbar-color: var(--color-luxury-ink-muted) transparent;
 }
 
+/* ── Chat background (theme-aware) ─────────────────── */
+.chat-bg {
+  background-image: url('/chatbackgroundLight.png');
+  background-size: auto;
+  background-repeat: repeat;
+}
+[data-theme="dark"] .chat-bg {
+  background-image: url('/chatbackground.png');
+  background-size: auto;
+  background-repeat: repeat;
+}
+
 /* Keep utility class for explicit use */
 .chat-scroll::-webkit-scrollbar { width: 6px; }
 .chat-scroll::-webkit-scrollbar-track { background: transparent; }

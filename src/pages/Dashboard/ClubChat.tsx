@@ -406,7 +406,10 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
       )}
 
       {/* Messages */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 chat-bg"
+        >
         {messages.length === 0 && (
           <div className="text-center py-12">
             <div className="w-16 h-16 bg-gradient-to-br from-brand-teal/10 to-brand-pink/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -455,7 +458,7 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
                   }}
                   className={`max-w-[70%] px-4 py-3 rounded-2xl text-sm font-medium cursor-pointer relative ${
                     isMe
-                      ? 'bg-brand-teal text-white rounded-tr-sm shadow-md'
+                      ? 'bg-luxury-ink text-surface-base rounded-tr-sm shadow-md'
                       : 'theme-card text-luxury-ink rounded-tl-sm border'
                   }`}
                   style={!isMe ? { borderColor: 'var(--color-border)' } : undefined}
