@@ -13,7 +13,7 @@ import { getOptimizedImageUrl } from '../../lib/utils';
 interface PendingUser { id: string; name: string; school: string; email: string; verified: boolean; isAdmin: boolean; reputation: number; idCardUrl?: string; selfieUrl?: string; }
 interface PendingProduct { id: string; title: string; category: string; price: number; sellerName: string; sellerId: string; image: string; description: string; }
 interface SchoolRequest { id: string; schoolName: string; city: string; website: string; requesterName: string; requesterEmail: string; idCardUrl: string; status: string; }
-interface PendingPost { id: string; title: string; content: string; type: string; school: string; authorName: string; status: string; city?: string; isAnonymous?: boolean; personaName?: string; }
+interface PendingPost { id: string; title: string; content: string; type: string; school: string; authorName: string; status: string; city?: string; isAnonymous?: boolean; personaName?: string; realAuthorName?: string; }
 interface Report { id: string; reporterId: string; contentType: string; contentId: string; reason: string; details: string; status: string; createdAt: any; }
 
 export default function AdminPanel() {
@@ -102,7 +102,29 @@ export default function AdminPanel() {
         try {
           const q = query(collection(db, 'posts'), where('status', '==', 'pending'));
           const snapshot = await getDocs(q);
-          setPendingPosts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PendingPost)));
+          const posts = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
+          
+          const authorIds = Array.from(new Set(posts.map(p => p.authorId).filter(Boolean)));
+          const userRealNamesMap: Record<string, string> = {};
+          
+          await Promise.all(authorIds.map(async (uid) => {
+            try {
+              const uDoc = await getDoc(doc(db, 'users', uid));
+              if (uDoc.exists()) {
+                const uData = uDoc.data();
+                userRealNamesMap[uid] = uData.name || `${uData.firstName || ''} ${uData.lastName || ''}`.trim() || 'Unknown User';
+              }
+            } catch (err) {
+              console.error("Error fetching author details in AdminPanel:", err);
+            }
+          }));
+          
+          const postsWithRealNames = posts.map(p => ({
+            ...p,
+            realAuthorName: userRealNamesMap[p.authorId] || 'Unknown User'
+          })) as PendingPost[];
+          
+          setPendingPosts(postsWithRealNames);
         } catch (err) { handleFirestoreError(err, OperationType.LIST, 'posts'); }
       };
       fetchPosts();
@@ -226,17 +248,19 @@ export default function AdminPanel() {
       setPendingPosts(prev => prev.filter(p => p.id !== postId));
       showToast(`Post "${title}" approved`, 'success');
 
-      // Notify the author and their followers
+      // Notify the author and their followers (skip follower notifications for anonymous posts)
       const postDoc = await getDoc(doc(db, 'posts', postId));
       if (postDoc.exists()) {
         const data = postDoc.data();
         createNotification({ userId: data.authorId, type: 'user_approved', title: 'Post Approved', message: `Your post "${title}" has been approved!`, link: `/dashboard` });
         
-        const followsSnap = await getDocs(query(collection(db, 'follows'), where('followingId', '==', data.authorId)));
-        followsSnap.forEach(f => {
-          const followerId = f.data().followerId;
-          createNotification({ userId: followerId, type: 'new_post', title: 'New Post', message: `${data.authorName} just posted: "${title}"`, link: `/dashboard` });
-        });
+        if (!data.isAnonymous) {
+          const followsSnap = await getDocs(query(collection(db, 'follows'), where('followingId', '==', data.authorId)));
+          followsSnap.forEach(f => {
+            const followerId = f.data().followerId;
+            createNotification({ userId: followerId, type: 'new_post', title: 'New Post', message: `${data.authorName} just posted: "${title}"`, link: `/dashboard` });
+          });
+        }
       }
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, `posts/${postId}`); }
   };
@@ -510,7 +534,7 @@ export default function AdminPanel() {
                     <h3 className="text-base font-bold text-luxury-ink">{item.title}</h3>
                   </div>
                   <p className="text-xs font-medium text-luxury-ink/40 flex flex-wrap items-center gap-1.5 mt-1">
-                    By {item.authorName} 
+                    By {item.isAnonymous ? (item.realAuthorName || 'Unknown User') : item.authorName} 
                     {item.isAnonymous && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-luxury-ink/5 rounded-md text-[9px] font-bold text-luxury-ink/60">
                         🔓 Posted as {item.personaName}

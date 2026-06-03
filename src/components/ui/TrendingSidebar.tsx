@@ -5,6 +5,7 @@ import { useTrending } from '../../hooks/useTrending';
 import { useAuth } from '../../lib/AuthContext';
 import { ScoredPost, ScoredProduct, TrendLabel, formatRelativeTime } from '../../lib/trending';
 import { getOptimizedImageUrl } from '../../lib/utils';
+import { getPersonaDisplay } from '../../lib/confessions';
 
 type Tab = 'school' | 'city';
 
@@ -53,6 +54,7 @@ function TrendBadge({ label }: { label: TrendLabel }) {
 }
 
 function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; index: number }) {
+  const displayInfo = getPersonaDisplay(post, false);
   return (
     <Link
       to="/dashboard"
@@ -80,25 +82,25 @@ function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; 
         {/* Author + School */}
         <div className="flex items-center gap-1.5 mt-1.5">
           <div className="w-4 h-4 rounded-full bg-brand-pink/10 flex items-center justify-center overflow-hidden shrink-0">
-            {post.authorProfilePicture ? (
+            {!displayInfo.isAnonymous && displayInfo.profilePicture ? (
               <img
-                src={getOptimizedImageUrl(post.authorProfilePicture)}
+                src={getOptimizedImageUrl(displayInfo.profilePicture)}
                 alt=""
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
             ) : (
               <span className="text-[7px] font-bold text-brand-pink">
-                {post.authorName[0]?.toUpperCase()}
+                {displayInfo.name[0]?.toUpperCase()}
               </span>
             )}
           </div>
           <span className="text-[10px] font-bold text-luxury-ink/40 truncate">
-            {post.authorName}
+            {displayInfo.name}
           </span>
           <span className="text-luxury-ink/15 text-[10px]">·</span>
           <span className="text-[10px] font-bold text-luxury-ink/25 truncate">
-            {post.school}
+            {displayInfo.school}
           </span>
         </div>
 

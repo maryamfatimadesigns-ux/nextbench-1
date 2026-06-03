@@ -517,14 +517,15 @@ export default function Feed() {
         const fetchedPosts: Post[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
-          const authorData = userCache[data.authorId] || {};
+          const isPostAnon = data.isAnonymous === true;
+          const authorData = isPostAnon ? {} : (userCache[data.authorId] || {});
           
           fetchedPosts.push({
             id: docSnap.id,
             ...data,
             // Prioritize real-time user data, fallback to denormalized data
-            authorName: authorData.name || data.authorName || 'Unknown User',
-            authorProfilePicture: authorData.profilePicture || data.authorProfilePicture || null,
+            authorName: isPostAnon ? (data.authorName || data.personaName || 'Anonymous') : (authorData.name || data.authorName || 'Unknown User'),
+            authorProfilePicture: isPostAnon ? null : (authorData.profilePicture || data.authorProfilePicture || null),
             school: authorData.school || data.school || 'Unknown School',
           } as Post);
         });
@@ -762,10 +763,32 @@ export default function Feed() {
     const type = formData.get('type') as string;
     const privacy = (formData.get('privacy') as 'public' | 'private') || 'public';
 
-    if (type === 'confession' && isAnonymous && !userData?.anonymousPersonaName) {
-      showToast('You must set up an anonymous persona in Profile Settings first.', 'error');
-      setIsSubmitting(false);
-      return;
+    let personaName = userData?.anonymousPersonaName || '';
+    const isPostAnonymous = type === 'confession' && isAnonymous;
+
+    if (isPostAnonymous && !personaName) {
+      const inputName = window.prompt('Please enter an anonymous persona name (e.g. Lost Freshman) to post anonymously:');
+      if (!inputName || !inputName.trim()) {
+        showToast('Anonymous persona name is required to post anonymously.', 'error');
+        setIsSubmitting(false);
+        return;
+      }
+      personaName = inputName.trim();
+      
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          anonymousPersonaName: personaName,
+          updatedAt: serverTimestamp()
+        });
+        if (userData) {
+          userData.anonymousPersonaName = personaName;
+        }
+        showToast('Anonymous persona name set successfully!', 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     try {
@@ -783,14 +806,14 @@ export default function Feed() {
         title,
         content,
         type,
-        isAnonymous: type === 'confession' ? isAnonymous : false,
-        personaName: (type === 'confession' && isAnonymous) ? userData.anonymousPersonaName : null,
+        isAnonymous: isPostAnonymous,
+        personaName: isPostAnonymous ? personaName : null,
         reactionsCount: type === 'confession' ? {} : null,
         city: userData.city || 'Lucknow',
         school: userData.school,
         authorId: user.uid,
-        authorName: userData.name || user.email,
-        authorProfilePicture: userData.profilePicture || null,
+        authorName: isPostAnonymous ? personaName : (userData.name || user.email),
+        authorProfilePicture: isPostAnonymous ? null : (userData.profilePicture || null),
         status: initialStatus,
         privacy,
         imageUrls,
@@ -803,19 +826,21 @@ export default function Feed() {
       if (shouldAutoApprove) {
         showToast('Post published successfully!', 'success');
         
-        // Notify followers of the author in real-time
-        const authorName = userData.name || user.email;
-        const followsSnap = await getDocs(query(collection(db, 'follows'), where('followingId', '==', user.uid)));
-        followsSnap.forEach(f => {
-          const followerId = f.data().followerId;
-          createNotification({ 
-            userId: followerId, 
-            type: 'new_message', 
-            title: 'New Post', 
-            message: `${authorName} just posted: "${title}"`, 
-            link: `/dashboard` 
+        // Notify followers of the author in real-time (skip for anonymous posts)
+        if (!isPostAnonymous) {
+          const authorName = userData.name || user.email;
+          const followsSnap = await getDocs(query(collection(db, 'follows'), where('followingId', '==', user.uid)));
+          followsSnap.forEach(f => {
+            const followerId = f.data().followerId;
+            createNotification({ 
+              userId: followerId, 
+              type: 'new_message', 
+              title: 'New Post', 
+              message: `${authorName} just posted: "${title}"`, 
+              link: `/dashboard` 
+            });
           });
-        });
+        }
       } else {
         if (!isClean && isTextOnly) {
           showToast('Post flagged for containing sensitive words. Submitted for review.', 'warning');

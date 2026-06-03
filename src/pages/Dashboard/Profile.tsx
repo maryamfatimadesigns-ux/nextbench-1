@@ -191,7 +191,12 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     const q = query(collection(db, 'posts'), where('authorId', '==', targetUserId));
     const unsub = onSnapshot(q, (snap) => {
       const posts: any[] = [];
-      snap.forEach(d => posts.push({ id: d.id, ...d.data() }));
+      snap.forEach(d => {
+        const postData = d.data();
+        if (!postData.isAnonymous || isOwnProfile) {
+          posts.push({ id: d.id, ...postData });
+        }
+      });
       posts.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
       setMyPosts(posts);
     });
