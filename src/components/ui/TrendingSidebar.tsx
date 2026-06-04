@@ -57,8 +57,7 @@ function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; 
   const displayInfo = getPersonaDisplay(post, false);
   return (
     <Link
-      to="/dashboard"
-      state={{ highlightPostId: post.id }}
+      to={`/community?postId=${post.id}`}
       className="group flex gap-3 p-3 -mx-3 rounded-xl hover:bg-surface-soft/80 transition-all cursor-pointer"
     >
       {/* Rank number */}

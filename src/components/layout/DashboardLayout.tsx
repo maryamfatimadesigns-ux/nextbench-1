@@ -30,7 +30,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       {/* Centered Layout Container */}
       <div className="w-full flex justify-center relative z-10">
         
-        <div className="flex w-full max-w-[1250px] min-w-0">
+        <div className="flex w-full max-w-[1350px] min-w-0">
           
           {/* Left Sidebar (Now next to middle content) */}
           <div className={`hidden md:block shrink-0 border-r transition-all duration-300 ${
@@ -45,7 +45,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </main>
 
           {/* Right Sidebar (hidden on mobile and tablet) */}
-          <div className="hidden lg:block w-[280px] xl:w-[320px] shrink-0">
+          <div className="hidden lg:block w-[320px] xl:w-[380px] shrink-0">
             <SuggestedUsers />
           </div>
         </div>
