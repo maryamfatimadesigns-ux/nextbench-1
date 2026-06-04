@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Send, ArrowLeft, MoreVertical, ShieldCheck, User, Package, Phone, Flag, Camera, X, Image as ImageIcon, CornerDownRight, Pin, CheckCircle2, Circle, Copy, Trash2, Download } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, where, writeBatch, arrayUnion, arrayRemove, limit } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, getDocs, where, writeBatch, arrayUnion, arrayRemove, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useToast } from '../../lib/ToastContext';
 import { uploadChatImage } from '../../lib/storage';
@@ -35,6 +35,8 @@ interface ChatRoomData {
   pinnedMessageId?: string;
   pinnedMessageText?: string;
   unreadBy?: string[];
+  status?: string;
+  requestedBy?: string;
 }
 
 const QUICK_MESSAGES = [
@@ -412,6 +414,41 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
     setSelectedMessages(new Set());
   };
 
+  const handleAcceptRequest = async () => {
+    if (!roomId) return;
+    try {
+      await updateDoc(doc(db, 'chatRooms', roomId), {
+        status: 'active',
+        requestedBy: null
+      });
+      showToast('Chat request accepted', 'success');
+    } catch (err) {
+      showToast('Failed to accept request', 'error');
+    }
+  };
+
+  const handleDeclineRequest = async () => {
+    if (!roomId || !user) return;
+    if (!confirm('Are you sure you want to decline and delete this request?')) return;
+    try {
+      const batch = writeBatch(db);
+      const msgsRef = collection(db, 'chatRooms', roomId, 'messages');
+      const msgsSnap = await getDocs(msgsRef);
+      msgsSnap.docs.forEach(d => batch.delete(d.ref));
+      batch.delete(doc(db, 'chatRooms', roomId));
+      await batch.commit();
+      
+      showToast('Chat request declined', 'info');
+      navigate('/messages');
+    } catch (err) {
+      showToast('Failed to decline request', 'error');
+    }
+  };
+
+  const isPendingRequester = roomData?.status === 'pending' && roomData?.requestedBy === user?.uid;
+  const isPendingRecipient = roomData?.status === 'pending' && roomData?.requestedBy !== user?.uid;
+  const hasSentPendingMessage = isPendingRequester && messages.some(m => m.senderId === user?.uid);
+
   if (!user || !otherUser) return (
     <div className="pt-32 text-center">
       <div className="w-10 h-10 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-4" />
@@ -669,6 +706,14 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
               </button>
             </div>
           </div>
+        ) : isPendingRecipient ? (
+          <div className="bg-surface-card rounded-2xl p-4 border border-amber-500/20 shadow-lg text-center mb-2 mx-auto max-w-sm">
+            <p className="text-sm font-bold text-luxury-ink mb-3">{otherUser?.name} wants to message you.</p>
+            <div className="flex items-center justify-center gap-3">
+              <button onClick={handleDeclineRequest} className="px-6 py-2 rounded-full border border-luxury-ink/10 text-sm font-bold hover:bg-surface-soft transition-colors text-luxury-ink/60">Decline</button>
+              <button onClick={handleAcceptRequest} className="px-6 py-2 rounded-full bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 transition-colors shadow-md">Accept</button>
+            </div>
+          </div>
         ) : isBlocked ? (
           <div className="text-center py-4 bg-surface-card rounded-2xl border border-luxury-ink/5 shadow-lg">
             <p className="text-sm font-bold text-luxury-ink/40">
@@ -677,6 +722,12 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
           </div>
         ) : (
           <div className="relative">
+            {isPendingRequester && (
+              <div className="mb-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-4 py-2 text-center shadow-sm">
+                <p className="text-xs font-bold text-amber-700">Waiting for {otherUser?.name} to accept your request.</p>
+              </div>
+            )}
+            
             {replyingTo && (
               <div className="mb-2 bg-surface-card border rounded-2xl px-4 py-3 flex items-start justify-between shadow-md" style={{ borderColor: 'var(--color-border)' }}>
                 <div className="flex-1 overflow-hidden">
@@ -696,7 +747,7 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
+                disabled={isUploading || hasSentPendingMessage}
                 className="p-3 rounded-full bg-surface-card border border-luxury-ink/10 text-brand-teal hover:bg-brand-teal/10 transition-all shrink-0 disabled:opacity-50 shadow-md"
                 title="Send Image"
               >
@@ -746,8 +797,8 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
                       }
                     }
                   }}
-                  placeholder={isUploading ? "Uploading..." : "Type your message..."}
-                  disabled={isUploading}
+                  placeholder={hasSentPendingMessage ? "Request pending..." : isUploading ? "Uploading..." : "Type your message..."}
+                  disabled={isUploading || hasSentPendingMessage}
                   className="flex-1 bg-transparent py-3.5 text-sm font-medium focus:outline-none text-luxury-ink placeholder:text-luxury-ink/30"
                 />
               </div>
@@ -755,7 +806,7 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
               {/* Send button — outside pill */}
               <button
                 type="submit"
-                disabled={!newMessage.trim() || isUploading}
+                disabled={!newMessage.trim() || isUploading || hasSentPendingMessage}
                 className="p-3 bg-brand-teal text-white rounded-full hover:opacity-90 transition-all shadow-md disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
               >
                 <Send size={18} />

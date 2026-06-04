@@ -24,6 +24,8 @@ interface ChatRoom {
   type?: string;
   otherUser?: any;
   unreadBy?: string[];
+  status?: string;
+  requestedBy?: string;
 }
 
 export default function ChatList() {
@@ -250,6 +252,9 @@ export default function ChatList() {
     return true;
   });
 
+  const pendingRequests = filteredItems.filter(item => item.type === 'chat' && (item.data as ChatRoom).status === 'pending' && (item.data as ChatRoom).requestedBy !== user?.uid);
+  const activeChatsAndClubs = filteredItems.filter(item => !(item.type === 'chat' && (item.data as ChatRoom).status === 'pending' && (item.data as ChatRoom).requestedBy !== user?.uid));
+
   return (
     <div className="pb-20 max-w-2xl mx-auto min-h-screen">
       {/* Header and Tabs */}
@@ -298,18 +303,70 @@ export default function ChatList() {
             </button>
           </div>
         ) : (
-          filteredItems.map(({ type, data }) => {
-            if (type === 'chat') {
-              const room = data as ChatRoom;
-              const isDM = room.type === 'dm' || !room.productTitle;
-              const isUnread = room.unreadBy?.includes(user?.uid || '');
-              return (
-                <Link 
-                  to={`/chat/${room.id}`} 
-                  state={{ otherUser: room.otherUser, roomData: room }}
-                  key={`chat-${room.id}`}
-                  className="block group px-2 md:px-0"
-                >
+          <>
+            {pendingRequests.length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-sm font-bold text-amber-600 mb-2 px-4 flex items-center gap-2">
+                  <MessageSquare size={16} /> Chat Requests ({pendingRequests.length})
+                </h2>
+                <div className="bg-amber-500/5 rounded-2xl p-2 border border-amber-500/20">
+                  {pendingRequests.map(({ type, data }) => {
+                    const room = data as ChatRoom;
+                    const isDM = room.type === 'dm' || !room.productTitle;
+                    return (
+                      <Link 
+                        to={`/chat/${room.id}`} 
+                        state={{ otherUser: room.otherUser, roomData: room }}
+                        key={`pending-${room.id}`}
+                        className="block group px-2 md:px-0"
+                      >
+                        <div className="flex items-center gap-4 py-3 group-hover:bg-amber-500/10 rounded-2xl px-2 transition-colors cursor-pointer">
+                          <div className="relative shrink-0">
+                            <div className="w-14 h-14 rounded-full bg-amber-500/10 flex items-center justify-center overflow-hidden">
+                              {room.otherUser?.profilePicture ? (
+                                <img src={getOptimizedImageUrl(room.otherUser.profilePicture)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <User size={24} className="text-amber-600" />
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex-1 min-w-0 py-1 border-b border-amber-500/10 group-hover:border-transparent transition-colors">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <h3 className="truncate text-base font-bold text-amber-700">
+                                {room.otherUser?.name || 'Unknown User'}
+                              </h3>
+                              <span className="text-xs whitespace-nowrap ml-2 text-amber-600 font-bold">
+                                {room.updatedAt?.toDate()?.toLocaleDateString([], { month: 'short', day: 'numeric' }) || ''}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                              <p className="text-sm truncate flex-1 text-amber-700/80 font-medium">
+                                Wants to send you a message
+                              </p>
+                              <div className="w-2.5 h-2.5 bg-amber-500 rounded-full shrink-0 mt-1 shadow-sm"></div>
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {activeChatsAndClubs.map(({ type, data }) => {
+              if (type === 'chat') {
+                const room = data as ChatRoom;
+                const isDM = room.type === 'dm' || !room.productTitle;
+                const isUnread = room.unreadBy?.includes(user?.uid || '');
+                return (
+                  <Link 
+                    to={`/chat/${room.id}`} 
+                    state={{ otherUser: room.otherUser, roomData: room }}
+                    key={`chat-${room.id}`}
+                    className="block group px-2 md:px-0"
+                  >
                   <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
                     <div className="relative shrink-0">
                       <div className="w-14 h-14 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden">
@@ -394,12 +451,13 @@ export default function ChatList() {
                           {club.memberCount} <Users size={10} className="inline" />
                         </span>
                       </div>
+                      </div>
                     </div>
-                  </div>
-                </Link>
-              );
-            }
-          })
+                  </Link>
+                );
+              }
+            })}
+          </>
         )}
       </div>
 
