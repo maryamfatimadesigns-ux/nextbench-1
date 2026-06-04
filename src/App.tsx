@@ -22,7 +22,7 @@ const Profile       = lazyWithRetry(() => import('./pages/Dashboard/Profile'));
 const SellItem      = lazyWithRetry(() => import('./pages/Dashboard/SellItem'));
 const AdminPanel    = lazyWithRetry(() => import('./pages/Dashboard/AdminPanel'));
 const PostView      = lazyWithRetry(() => import('./pages/PostView'));
-const MessagesShell = lazyWithRetry(() => import('./components/layout/MessagesShell'));
+const MessagesLayout = lazyWithRetry(() => import('./pages/Dashboard/MessagesLayout'));
 // Legacy /chat/:roomId deep-link — imported separately so old notification links still work.
 // ChatRoom is also used internally by MessagesLayout (non-lazy), which is fine; React
 // deduplicates the module so there's no double-bundle issue with modern bundlers.
@@ -103,25 +103,6 @@ export default function App() {
               <Route path="/post/:postId" element={<PostView />} />
             </Route>
 
-            {/* Messages — full-screen shell, no DashLayout, no right sidebar */}
-            <Route
-              path="/messages"
-              element={<ProtectedRoute requireAuth requireVerified><MessagesShell /></ProtectedRoute>}
-            />
-            <Route
-              path="/messages/:roomId"
-              element={<ProtectedRoute requireAuth requireVerified><MessagesShell /></ProtectedRoute>}
-            />
-
-            {/*
-              Legacy deep-link kept for old notification URLs pointing to /chat/:roomId.
-              ChatRoomPage renders in standalone (fixed inset-0) mode — no panelMode prop.
-            */}
-            <Route
-              path="/chat/:roomId"
-              element={<ProtectedRoute requireAuth requireVerified><ChatRoomPage /></ProtectedRoute>}
-            />
-
             {/* Dashboard 3-column layout */}
             <Route element={<DashLayout />}>
               <Route path="/dashboard"  element={<Navigate to="/" replace />} />
@@ -134,6 +115,8 @@ export default function App() {
               <Route path="/profile/:userId" element={<ProtectedRoute requireAuth><Profile /></ProtectedRoute>} />
               <Route path="/wishlist"   element={<ProtectedRoute requireAuth requireVerified><Wishlist /></ProtectedRoute>} />
               <Route path="/notifications" element={<ProtectedRoute requireAuth requireVerified><Notifications /></ProtectedRoute>} />
+              <Route path="/messages"   element={<ProtectedRoute requireAuth requireVerified><MessagesLayout /></ProtectedRoute>} />
+              <Route path="/messages/:roomId" element={<ProtectedRoute requireAuth requireVerified><MessagesLayout /></ProtectedRoute>} />
               <Route path="/admin"      element={<ProtectedRoute requireAuth requireAdmin><AdminPanel /></ProtectedRoute>} />
               <Route path="/club/join/:inviteCode" element={<ProtectedRoute requireAuth requireVerified><ClubJoin /></ProtectedRoute>} />
               <Route path="/club/:clubId"          element={<ProtectedRoute requireAuth requireVerified><ClubChat /></ProtectedRoute>} />
