@@ -12,6 +12,7 @@ import { joinClub } from '../../lib/clubs';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
+import PageLoader from '../../components/ui/PageLoader';
 
 export default function Search() {
   const { user, userData } = useAuth();
@@ -253,9 +254,7 @@ export default function Search() {
       {/* Results Content */}
       <div className="flex-1 flex flex-col gap-8">
         {loading ? (
-          <div className="py-20 text-center">
-            <div className="w-8 h-8 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          </div>
+          <PageLoader />
         ) : (
           <AnimatePresence mode="popLayout">
             

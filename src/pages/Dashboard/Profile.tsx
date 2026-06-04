@@ -18,6 +18,7 @@ import UsernameSetup from '../../components/ui/UsernameSetup';
 import ReportModal from '../../components/ui/ReportModal';
 import ProfileSettings from '../../components/ui/ProfileSettings';
 import SEO from '../../components/seo/SEO';
+import PageLoader from '../../components/ui/PageLoader';
 
 
 interface UserProduct {
@@ -470,7 +471,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     );
   }
 
-  if (!user || !profileUser) return <div className="pt-32 text-center text-xs font-bold uppercase tracking-widest text-luxury-ink/30">Loading profile...</div>;
+  if (!user || !profileUser) return <PageLoader />;
 
   const userName = profileUser.name || 'Unknown User';
   const [firstName, ...lastNameParts] = userName.split(' ');

@@ -8,6 +8,7 @@ import ProtectedRoute from './components/ui/ProtectedRoute';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import { useAuth } from './lib/AuthContext';
 import { lazyWithRetry } from './lib/lazyWithRetry';
+import PageLoader from './components/ui/PageLoader';
 
 const LandingPage   = lazyWithRetry(() => import('./pages/LandingPage'));
 const Login         = lazyWithRetry(() => import('./pages/Auth/Login'));
@@ -36,13 +37,7 @@ const PrivacyPage   = lazyWithRetry(() => import('./pages/Legal/PrivacyPage'));
 const CareersPage   = lazyWithRetry(() => import('./pages/Legal/CareersPage'));
 const UsernameProfile = lazyWithRetry(() => import('./pages/Dashboard/UsernameProfile'));
 
-function PageLoader() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 border-2 border-brand-teal border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-}
+
 
 function VerificationGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

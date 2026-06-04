@@ -7,6 +7,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/ToastContext';
 import PostCard from '../components/ui/PostCard';
 import Navbar from '../components/layout/Navbar';
+import PageLoader from '../components/ui/PageLoader';
 
 export default function PostView() {
   const { postId } = useParams<{ postId: string }>();
@@ -59,13 +60,7 @@ export default function PostView() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-surface-base flex flex-col">
-        <div className="flex-1 flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-brand-teal border-t-transparent rounded-full animate-spin" />
-        </div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!post || (post.privacy === 'private' && !user)) {

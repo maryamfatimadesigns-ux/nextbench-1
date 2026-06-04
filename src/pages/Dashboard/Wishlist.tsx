@@ -7,6 +7,7 @@ import { collection, query, where, onSnapshot, deleteDoc, doc, getDoc } from 'fi
 import { Link } from 'react-router-dom';
 import { useToast } from '../../lib/ToastContext';
 import { getOptimizedImageUrl } from '../../lib/utils';
+import PageLoader from '../../components/ui/PageLoader';
 
 interface WishlistItem {
   id: string; // wishlist doc id
@@ -104,10 +105,7 @@ export default function Wishlist() {
       </div>
 
       {loading ? (
-        <div className="py-20 text-center">
-          <div className="w-10 h-10 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/30">Loading wishlist...</p>
-        </div>
+        <PageLoader />
       ) : items.length === 0 ? (
         <div className="bg-surface-card rounded-3xl p-20 text-center luxury-shadow border border-luxury-ink/5">
           <div className="w-16 h-16 bg-brand-pink/5 rounded-2xl flex items-center justify-center mx-auto mb-6">

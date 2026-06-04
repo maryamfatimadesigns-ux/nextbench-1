@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../lib/AuthContext';
+import PageLoader from './PageLoader';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -18,16 +19,7 @@ export default function ProtectedRoute({
   const { user, userData, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-brand-teal border-t-transparent rounded-full animate-spin" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30">
-            Authenticating...
-          </p>
-        </div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (requireAuth && !user) {

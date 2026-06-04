@@ -22,6 +22,7 @@ import { getPersonaDisplay } from '../../lib/confessions';
 import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, ReactionType } from '../../lib/reactions';
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
+import PageLoader from '../../components/ui/PageLoader';
 
 interface Post {
   id: string;
@@ -1329,10 +1330,7 @@ export default function Feed() {
 
       {/* Feed */}
       {loading ? (
-        <div className="py-20 text-center">
-          <div className="w-8 h-8 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-luxury-ink/30 text-sm">Loading...</p>
-        </div>
+        <PageLoader />
       ) : (
         <>
           <div className="flex flex-col w-full min-w-0">

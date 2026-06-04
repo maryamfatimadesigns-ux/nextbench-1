@@ -99,7 +99,7 @@ export default function SuggestedUsers() {
 
   if (!user) {
     return (
-      <div className="pt-8 px-5 sticky top-0 h-screen overflow-y-auto no-scrollbar hidden lg:block">
+      <div className="pt-8 px-5 hidden lg:block">
         <div className="p-4 text-center">
           <h3 className="text-sm font-semibold text-luxury-ink mb-2">Join the Community</h3>
           <p className="text-xs text-luxury-ink/50 mb-4">Log in to follow students from your school and see personalized suggestions.</p>
@@ -114,8 +114,8 @@ export default function SuggestedUsers() {
   if (!loading && suggestions.length === 0) return null;
 
   return (
-    <div className="pt-8 pl-4 pr-6 sticky top-0 h-screen overflow-y-auto no-scrollbar hidden lg:block">
-      <div className="mb-6 bg-surface-elevated rounded-2xl border border-border p-5">
+    <div className="pt-8 pl-4 pr-6 hidden lg:block">
+      <div className="mb-6 bg-surface-elevated rounded-2xl border border-luxury-ink/5 p-5">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-[14px] font-bold text-luxury-ink">Suggested for you</h3>
         </div>
@@ -165,7 +165,7 @@ export default function SuggestedUsers() {
       </div>
 
       {/* Trending Section */}
-      <div className="mb-6 bg-surface-elevated rounded-2xl border border-border p-5">
+      <div className="mb-6 bg-surface-elevated rounded-2xl border border-luxury-ink/5 p-5">
         <TrendingSidebar />
       </div>
 

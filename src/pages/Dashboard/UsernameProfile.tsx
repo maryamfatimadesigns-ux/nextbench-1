@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router-dom';
 import { getUserIdByUsername } from '../../lib/usernames';
 import Profile from './Profile';
+import PageLoader from '../../components/ui/PageLoader';
 
 /**
  * Resolves /:username param to a userId, then renders Profile.
@@ -44,14 +45,7 @@ export default function UsernameProfile() {
   }, [username]);
 
   if (loading) {
-    return (
-      <div className="pt-32 text-center">
-        <div className="w-10 h-10 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/30">
-          Finding @{username}...
-        </p>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (notFound) {
