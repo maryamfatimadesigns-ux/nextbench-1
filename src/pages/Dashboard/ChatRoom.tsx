@@ -562,11 +562,11 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
                   setMenuPosition(selectedMessageId === msg.id ? null : pos);
                   setSelectedMessageId(selectedMessageId === msg.id ? null : msg.id);
                 }}
-                className={`max-w-[75%] px-5 py-3.5 rounded-2xl text-sm font-medium cursor-pointer relative ${
-                isMe 
-                  ? 'bg-luxury-ink text-surface-base rounded-tr-sm shadow-md' 
-                  : 'theme-card text-luxury-ink rounded-tl-sm border'
-              }`} style={!isMe ? { borderColor: 'var(--color-border)' } : undefined}>
+                className={`max-w-[75%] px-5 py-3.5 rounded-2xl text-sm font-medium cursor-pointer relative shadow-sm ${
+                  isMe 
+                    ? 'bubble-mine rounded-tr-sm' 
+                    : 'bubble-theirs rounded-tl-sm'
+                }`} style={!isMe ? { borderColor: 'var(--color-border)' } : undefined}>
                 
                 {!isDeleted && msg.replyToText && (
                   <div className={`text-xs mb-2 p-2 rounded-lg border-l-2 ${isMe ? 'bg-surface-base/20 border-surface-base/40' : 'bg-surface-soft border-brand-teal'}`}>
