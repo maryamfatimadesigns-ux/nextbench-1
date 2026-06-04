@@ -23,6 +23,7 @@ import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, Rea
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
 import PageLoader from '../../components/ui/PageLoader';
+import CenterLoader from '../../components/ui/CenterLoader';
 
 interface Post {
   id: string;
@@ -1330,7 +1331,7 @@ export default function Feed() {
 
       {/* Feed */}
       {loading ? (
-        <PageLoader />
+        <CenterLoader />
       ) : (
         <>
           <div className="flex flex-col w-full min-w-0">

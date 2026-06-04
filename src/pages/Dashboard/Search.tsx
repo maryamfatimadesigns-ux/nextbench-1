@@ -13,6 +13,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
 import PageLoader from '../../components/ui/PageLoader';
+import CenterLoader from '../../components/ui/CenterLoader';
 
 export default function Search() {
   const { user, userData } = useAuth();
@@ -254,7 +255,7 @@ export default function Search() {
       {/* Results Content */}
       <div className="flex-1 flex flex-col gap-8">
         {loading ? (
-          <PageLoader />
+          <CenterLoader />
         ) : (
           <AnimatePresence mode="popLayout">
             

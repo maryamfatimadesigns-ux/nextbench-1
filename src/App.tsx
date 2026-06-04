@@ -50,11 +50,7 @@ function SmartHome() {
   const { user, loading } = useAuth();
   if (loading) return <PageLoader />;
   if (user) {
-    return (
-      <DashboardLayout>
-        <Feed />
-      </DashboardLayout>
-    );
+    return <Navigate to="/community" replace />;
   }
   return (
     <div className="min-h-screen flex flex-col">

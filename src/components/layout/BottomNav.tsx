@@ -8,7 +8,7 @@ export default function BottomNav() {
   const location = useLocation();
 
   const navLinks = [
-    { name: 'Home', path: '/', icon: Home },
+    { name: 'Home', path: '/community', icon: Home },
     { name: 'Search', path: '/search', icon: Search },
     { name: 'Sell', path: '/sell', icon: PlusCircle },
     { name: 'Messages', path: '/messages', icon: MessageSquare },

@@ -3,6 +3,7 @@ import { useParams, Navigate } from 'react-router-dom';
 import { getUserIdByUsername } from '../../lib/usernames';
 import Profile from './Profile';
 import PageLoader from '../../components/ui/PageLoader';
+import CenterLoader from '../../components/ui/CenterLoader';
 
 /**
  * Resolves /:username param to a userId, then renders Profile.
@@ -45,7 +46,7 @@ export default function UsernameProfile() {
   }, [username]);
 
   if (loading) {
-    return <PageLoader />;
+    return <CenterLoader />;
   }
 
   if (notFound) {

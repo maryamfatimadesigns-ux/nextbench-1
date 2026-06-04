@@ -19,6 +19,7 @@ import ReportModal from '../../components/ui/ReportModal';
 import ProfileSettings from '../../components/ui/ProfileSettings';
 import SEO from '../../components/seo/SEO';
 import PageLoader from '../../components/ui/PageLoader';
+import CenterLoader from '../../components/ui/CenterLoader';
 
 
 interface UserProduct {
@@ -471,7 +472,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     );
   }
 
-  if (!user || !profileUser) return <PageLoader />;
+  if (!user || !profileUser) return <CenterLoader />;
 
   const userName = profileUser.name || 'Unknown User';
   const [firstName, ...lastNameParts] = userName.split(' ');

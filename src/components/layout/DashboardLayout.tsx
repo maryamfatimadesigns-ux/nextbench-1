@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
 import SidebarNav from './SidebarNav';
 import BottomNav from './BottomNav';
 import MobileHeader from './MobileHeader';
@@ -7,6 +7,14 @@ import { useAuth } from '../../lib/AuthContext';
 import UsernameSetup from '../ui/UsernameSetup';
 import { ShieldAlert } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+
+function CenterLoader() {
+  return (
+    <div className="flex items-center justify-center py-32">
+      <div className="w-10 h-10 border-3 border-brand-teal border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { userData } = useAuth();
@@ -39,9 +47,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <SidebarNav />
           </div>
 
-          {/* Center Main Content */}
+          {/* Center Main Content — has its own Suspense so sidebar never flickers */}
           <main className="flex-1 min-w-0 md:border-r pb-20 md:pb-0" style={{ borderColor: 'var(--color-border)' }}>
-            {children}
+            <Suspense fallback={<CenterLoader />}>
+              {children}
+            </Suspense>
           </main>
 
           {/* Right Sidebar (hidden on mobile and tablet) */}
