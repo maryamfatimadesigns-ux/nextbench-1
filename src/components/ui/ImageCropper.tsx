@@ -72,7 +72,7 @@ export default function ImageCropper({ imageSrc, onCropComplete, onCancel, aspec
   }, [croppedAreaPixels, imageSrc, onCropComplete, rotation]);
 
   return (
-    <div className="fixed inset-0 z-[200] bg-luxury-ink/95 flex flex-col">
+    <div className="fixed inset-0 z-200 bg-luxury-ink/95 flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-luxury-ink/80 backdrop-blur-xl border-b border-white/5">
         <button onClick={onCancel} className="p-2 text-white/60 hover:text-white transition-colors rounded-xl hover:bg-white/10">
