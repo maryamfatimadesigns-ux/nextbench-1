@@ -11,7 +11,7 @@
  * "Recently active" = lastSeen < 5 min ago.
  */
 
-import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, doc, query, updateDoc, serverTimestamp, onSnapshot, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { db } from './firebase';
 
@@ -45,20 +45,14 @@ async function setOffline(uid: string) {
 
 // ─── usePresence — call once at the app root (inside AuthProvider) ────────────
 
-/**
- * Call this hook with the current user's uid to start broadcasting presence.
- * Pass `null` when signed out.
- */
 export function usePresence(uid: string | null | undefined) {
   useEffect(() => {
     if (!uid) return;
 
     setOnline(uid);
 
-    // Heartbeat: keep lastSeen fresh so we don't appear offline after 90s
     const heartbeat = setInterval(() => setOnline(uid), HEARTBEAT_INTERVAL_MS);
 
-    // Go offline when tab is hidden or closed
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
         setOffline(uid);
@@ -87,7 +81,6 @@ export type PresenceStatus = 'online' | 'recent' | 'offline';
 
 export interface UserPresence {
   status: PresenceStatus;
-  /** Human-readable label: "Online", "Active Xm ago", "Last seen …" */
   label: string;
   lastSeen: Date | null;
 }
@@ -98,12 +91,10 @@ function computePresence(data: any): UserPresence {
   const now = Date.now();
   const msSince = lastSeenDate ? now - lastSeenDate.getTime() : Infinity;
 
-  // If online flag is set, show as online even if lastSeen hasn't been written yet
   if (isOnlineFlag && msSince < ONLINE_THRESHOLD_MS) {
     return { status: 'online', label: 'Online', lastSeen: lastSeenDate };
   }
 
-  // Also online if flag set but no lastSeen yet (first write still in flight)
   if (isOnlineFlag && !lastSeenDate) {
     return { status: 'online', label: 'Online', lastSeen: null };
   }
@@ -114,7 +105,6 @@ function computePresence(data: any): UserPresence {
     return { status: 'recent', label, lastSeen: lastSeenDate };
   }
 
-  // Format last seen
   let label = 'Offline';
   if (lastSeenDate) {
     const diffDays = Math.floor(msSince / 86_400_000);
@@ -132,10 +122,6 @@ function computePresence(data: any): UserPresence {
   return { status: 'offline', label, lastSeen: lastSeenDate };
 }
 
-/**
- * Subscribe to a user's presence in real time.
- * Pass `null` to skip (e.g. before the other user is known).
- */
 export function useUserPresence(uid: string | null | undefined): UserPresence {
   const [presence, setPresence] = useState<UserPresence>({
     status: 'offline',
@@ -151,7 +137,6 @@ export function useUserPresence(uid: string | null | undefined): UserPresence {
       { includeMetadataChanges: true },
       (snap) => {
         if (snap.exists()) {
-          // Skip stale cache reads that show offline — wait for server
           if (snap.metadata.fromCache && snap.data()?.online !== true) return;
           setPresence(computePresence(snap.data()));
         }
@@ -163,16 +148,13 @@ export function useUserPresence(uid: string | null | undefined): UserPresence {
 
   return presence;
 }
+
 // ─── Batch presence for chat list ────────────────────────────────────────────
 
-/**
- * Given a map of uid → Firestore user data, derive presence for each.
- * Useful for rendering green dots in ChatList without extra subscriptions.
- */
 export function getPresenceFromData(userData: any): UserPresence {
   return computePresence(userData);
 }
-// Add to presence.ts
+
 export function usePresenceMap(uids: string[]): Record<string, UserPresence> {
   const [map, setMap] = useState<Record<string, UserPresence>>({});
   const key = [...new Set(uids)].sort().join(',');
@@ -196,4 +178,39 @@ export function usePresenceMap(uids: string[]): Record<string, UserPresence> {
   }, [key]);
 
   return map;
+}
+
+// ─── useOnlineCount — count users online right now ───────────────────────────
+
+/**
+ * Subscribes to all users with online === true and counts how many
+ * have a lastSeen within ONLINE_THRESHOLD_MS (90s).
+ * Excludes the current user from the count so you don't count yourself.
+ */
+export function useOnlineCount(currentUid?: string | null): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'users'),
+      where('online', '==', true)
+    );
+
+    const unsub = onSnapshot(q, { includeMetadataChanges: false }, (snap) => {
+      const now = Date.now();
+      let total = 0;
+      snap.forEach(docSnap => {
+        if (docSnap.id === currentUid) return;
+        const data = docSnap.data();
+        const lastSeen: Date | null = data?.lastSeen?.toDate?.() ?? null;
+        const msSince = lastSeen ? now - lastSeen.getTime() : Infinity;
+        if (msSince < ONLINE_THRESHOLD_MS) total++;
+      });
+      setCount(total);
+    });
+
+    return unsub;
+  }, [currentUid]);
+
+  return count;
 }

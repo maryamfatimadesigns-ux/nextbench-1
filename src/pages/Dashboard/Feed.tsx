@@ -228,7 +228,7 @@ function PostDetailModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
+      className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
       style={{ background: 'var(--color-overlay-heavy)' }}
       onClick={onClose}
     >
@@ -250,7 +250,7 @@ function PostDetailModal({
           {/* Author */}
           <div className="flex items-center gap-3 mb-5">
             <Link to={displayInfo.isAnonymous ? '#' : `/profile/${post.authorId}`} onClick={displayInfo.isAnonymous ? (e) => { e.preventDefault(); /* showToast handle here */ } : onClose} className={`shrink-0 ${displayInfo.isAnonymous ? 'cursor-pointer' : ''}`}>
-              <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg font-serif overflow-hidden border-2 border-white shadow-sm ${displayInfo.isAnonymous ? 'bg-gradient-to-br from-purple-500/20 to-blue-500/20 text-purple-600' : 'bg-brand-pink/10 text-brand-pink'}`}>
+              <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg font-serif overflow-hidden border-2 border-white shadow-sm ${displayInfo.isAnonymous ? 'bg-linear-to-br from-purple-500/20 to-blue-500/20 text-purple-600' : 'bg-brand-pink/10 text-brand-pink'}`}>
                 {!displayInfo.isAnonymous && post.authorProfilePicture ? (
                   <img src={getOptimizedImageUrl(post.authorProfilePicture)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : displayInfo.name[0]?.toUpperCase()}
@@ -286,7 +286,7 @@ function PostDetailModal({
 
           {/* Title & Content */}
           <h2 className="text-xl sm:text-2xl font-bold text-luxury-ink mb-3 leading-tight">{post.title}</h2>
-          <p className="text-luxury-ink/70 leading-relaxed whitespace-pre-wrap break-words text-[15px] mb-6">{post.content}</p>
+          <p className="text-luxury-ink/70 leading-relaxed whitespace-pre-wrap wrap-break-word text-[15px] mb-6">{post.content}</p>
 
           {/* Poll */}
           {post.poll && post.poll.choices?.length > 0 && (
@@ -388,7 +388,7 @@ function PostDetailModal({
                     <Heart size={20} className={hasUpvoted ? 'fill-brand-pink' : ''} />
                     {post.upvotesCount || 0}
                   </button>
-                  <div className="w-[1px] h-6 bg-luxury-ink/10"></div>
+                  <div className="w-1px h-6 bg-luxury-ink/10"></div>
                   <button
                     onClick={() => onDownvote(post)}
                     className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-sm font-bold transition-all ${hasDownvoted ? 'bg-indigo-500/10 text-indigo-500' : 'hover:bg-white text-luxury-ink/40 hover:text-indigo-500'}`}
@@ -1500,7 +1500,7 @@ export default function Feed() {
                 setPendingFiles([]);
               }
             }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
@@ -1596,7 +1596,7 @@ export default function Feed() {
                       name="content"
                       required
                       placeholder="What's on your mind?"
-                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-[200px]"
+                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-200px"
                     ></textarea>
 
                     {/* Poll Creator */}
@@ -1697,7 +1697,7 @@ export default function Feed() {
                   </div>
 
                   {/* Bottom Toolbar */}
-                  <div className="mt-4 pt-4 border-t border-luxury-ink/5 flex flex-wrap items-center justify-between gap-y-3 relative px-1 sticky bottom-0 bg-surface-card pb-2">
+                  <div className="mt-4 pt-4 border-t border-luxury-ink/5 flex flex-wrap items-center justify-between gap-y-3 relative px-1 bottom-0 bg-surface-card pb-2">
                     <div className="flex items-center gap-1 relative">
                       <label className="p-2.5 rounded-full hover:bg-surface-soft text-luxury-ink/50 hover:text-brand-teal transition-colors cursor-pointer group relative">
                         <ImageIcon size={22} />
@@ -1864,9 +1864,9 @@ function HorizontalDiscoverClubs() {
   if (loading || clubs.length === 0) return null;
 
   return (
-    <div className="py-8 my-2 border-y border-luxury-ink/5 bg-gradient-to-r from-surface-soft/40 via-transparent to-surface-soft/40 px-4 sm:px-0 relative overflow-hidden">
+    <div className="py-8 my-2 border-y border-luxury-ink/5 bg-linear-to-r from-surface-soft/40 via-transparent to-surface-soft/40 px-4 sm:px-0 relative overflow-hidden">
       {/* Subtle decorative glow */}
-      <div className="absolute top-0 left-1/4 w-1/2 h-px bg-gradient-to-r from-transparent via-brand-teal/20 to-transparent"></div>
+      <div className="absolute top-0 left-1/4 w-1/2 h-px bg-linear-to-r from-transparent via-brand-teal/20 to-transparent"></div>
       
       <div className="flex items-center justify-between mb-6 px-2">
         <div className="flex flex-col">
@@ -1883,7 +1883,7 @@ function HorizontalDiscoverClubs() {
           <Link 
             key={club.id} 
             to={`/club/${club.id}`} 
-            className="snap-start flex-shrink-0 w-[160px] bg-surface-card/70 backdrop-blur-sm rounded-2xl p-4 border border-luxury-ink/5 hover:border-brand-teal/20 transition-all group flex flex-col items-center text-center shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:shadow-[0_8px_20px_-4px_rgba(0,0,0,0.08)] hover:-translate-y-1"
+            className="snap-start shrink-0 w-160px bg-surface-card/70 backdrop-blur-sm rounded-2xl p-4 border border-luxury-ink/5 hover:border-brand-teal/20 transition-all group flex flex-col items-center text-center shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:shadow-[0_8px_20px_-4px_rgba(0,0,0,0.08)] hover:-translate-y-1"
           >
             <div className="w-16 h-16 rounded-full bg-surface-soft flex items-center justify-center overflow-hidden mb-3 border-[3px] border-surface-card shadow-sm ring-1 ring-luxury-ink/5">
               {club.avatar ? (
