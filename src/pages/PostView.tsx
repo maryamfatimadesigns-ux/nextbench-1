@@ -148,8 +148,6 @@ export default function PostView() {
           />
         </div>
       </main>
-      </main>
-
       <ShareModal
         isOpen={shareModalData.isOpen}
         onClose={() => setShareModalData(prev => ({ ...prev, isOpen: false }))}

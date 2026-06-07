@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, Send, Link as LinkIcon, CheckCircle2, ShieldCheck, User } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { collection, query, where, limit, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, arrayUnion } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, arrayUnion, limit } from 'firebase/firestore';
 import { getOrCreateDMRoom } from '../../lib/dm';
 import { useToast } from '../../lib/ToastContext';
 import { getOptimizedImageUrl } from '../../lib/utils';
@@ -33,6 +33,24 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [sendingTo, setSendingTo] = useState<Set<string>>(new Set());
   const [sentTo, setSentTo] = useState<Set<string>>(new Set());
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+
+  // Fetch who the user follows when modal opens
+  useEffect(() => {
+    if (!isOpen || !user) return;
+    const fetchFollowing = async () => {
+      try {
+        const q = query(collection(db, 'follows'), where('followerId', '==', user.uid));
+        const snap = await getDocs(q);
+        const ids = new Set<string>();
+        snap.forEach(doc => ids.add(doc.data().followingId));
+        setFollowingIds(ids);
+      } catch (err) {
+        console.error('Failed to fetch follows:', err);
+      }
+    };
+    fetchFollowing();
+  }, [isOpen, user]);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -96,11 +114,14 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
 
       const messageData: any = {
         senderId: user.uid,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        text: ''
       };
       
       if (!sharedPost) {
         messageData.text = `${postTitle}\n${postUrl}`;
+      } else {
+        messageData.text = '';
       }
 
       if (sharedPost) {
@@ -203,6 +224,7 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
               </div>
             </div>
 
+            {/* Users List */}
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
               {searchingUsers ? (
                 <div className="py-8 flex justify-center">
@@ -211,7 +233,13 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
               ) : userResults.length > 0 ? (
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 px-2 pb-2">Suggested</p>
-                  {userResults.map(u => (
+                  {[...userResults].sort((a, b) => {
+                    const aFollowed = followingIds.has(a.id);
+                    const bFollowed = followingIds.has(b.id);
+                    if (aFollowed && !bFollowed) return -1;
+                    if (!aFollowed && bFollowed) return 1;
+                    return 0;
+                  }).map(u => (
                     <div key={u.id} className="flex items-center justify-between p-2 hover:bg-surface-soft rounded-xl transition-colors">
                       <div className="flex items-center gap-3 overflow-hidden">
                         <div className="w-10 h-10 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden border border-luxury-ink/5 shrink-0">
