@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Flame, Zap, TrendingUp, Eye, Building2, MessageSquare, Heart, ShoppingBag, Activity } from 'lucide-react';
 import { useTrending } from '../../hooks/useTrending';
 import { useAuth } from '../../lib/AuthContext';
+import { useOnlineCount } from '../../lib/presence';
 import { ScoredPost, ScoredProduct, TrendLabel, formatRelativeTime } from '../../lib/trending';
 import { getOptimizedImageUrl } from '../../lib/utils';
 import { getPersonaDisplay } from '../../lib/confessions';
@@ -41,8 +42,6 @@ function TrendBadge({ label }: { label: TrendLabel }) {
   };
 
   const c = config[label] || { bg: 'bg-luxury-ink/5', text: 'text-luxury-ink/60', icon: null };
-
-  // Remove emoji prefix for the display text
   const displayText = label.replace(/^[^\s]+\s/, '');
 
   return (
@@ -60,25 +59,19 @@ function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; 
       to={`/community?postId=${post.id}`}
       className="group flex gap-3 p-3 -mx-3 rounded-xl hover:bg-surface-soft/80 transition-all cursor-pointer"
     >
-      {/* Rank number */}
       <div className="w-6 h-6 rounded-lg bg-luxury-ink/5 flex items-center justify-center shrink-0 mt-0.5">
         <span className="text-[11px] font-black text-luxury-ink/30">{index + 1}</span>
       </div>
 
       <div className="flex-1 min-w-0">
-        {/* Trend label */}
         {post.trendLabel && (
           <div className="mb-1.5">
             <TrendBadge label={post.trendLabel} />
           </div>
         )}
-
-        {/* Title */}
         <h4 className="text-[13px] font-bold text-luxury-ink leading-snug line-clamp-2 group-hover:text-brand-teal transition-colors">
           {post.title}
         </h4>
-
-        {/* Author + School */}
         <div className="flex items-center gap-1.5 mt-1.5">
           <div className="w-4 h-4 rounded-full bg-brand-pink/10 flex items-center justify-center overflow-hidden shrink-0">
             {!displayInfo.isAnonymous && displayInfo.profilePicture ? (
@@ -102,8 +95,6 @@ function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; 
             {displayInfo.school}
           </span>
         </div>
-
-        {/* Engagement stats */}
         <div className="flex items-center gap-4 mt-2 text-luxury-ink/30">
           <span className="flex items-center gap-1 text-[10px] font-bold">
             <Heart size={10} /> {post.upvotesCount || 0}
@@ -117,7 +108,6 @@ function TrendingPostItem({ post, index }: { key?: React.Key; post: ScoredPost; 
         </div>
       </div>
 
-      {/* Thumbnail if has image */}
       {(post.imageUrls?.[0] || post.imageUrl) && (
         <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 mt-0.5 bg-luxury-ink/5">
           <img
@@ -166,8 +156,9 @@ function TrendingProductItem({ product }: { product: ScoredProduct }) {
 }
 
 export default function TrendingSidebar() {
-  const { userData } = useAuth();
-  const { schoolTrending, cityTrending, trendingProduct, activeToday, loading } = useTrending();
+  const { user, userData } = useAuth();
+  const { schoolTrending, cityTrending, trendingProduct, loading } = useTrending();
+  const onlineCount = useOnlineCount(user?.uid);
   const [activeTab, setActiveTab] = useState<Tab>('school');
 
   if (!userData) return null;
@@ -177,23 +168,24 @@ export default function TrendingSidebar() {
 
   return (
     <div className="mt-6">
-      {/* Section header with pulse */}
+      {/* Section header */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold text-luxury-ink flex items-center gap-2">
           <Flame size={16} className="text-orange-500" />
           Trending Now
         </h3>
-        {activeToday > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-            </span>
-            <span className="text-[10px] font-bold text-green-600/70">
-              {activeToday} active today
-            </span>
-          </div>
-        )}
+        {/* Live online count */}
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+          </span>
+          <span className="text-[10px] font-bold text-green-600/70">
+            {onlineCount > 0
+              ? `${onlineCount} online now`
+              : 'Be the first online'}
+          </span>
+        </div>
       </div>
 
       {/* Tabs */}

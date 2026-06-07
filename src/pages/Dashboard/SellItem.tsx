@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { MapPin, Truck, ChevronRight, Upload, X, Link as LinkIcon, Tag } from 'lucide-react';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { categories } from '../../mockData';
 import { useAuth } from '../../lib/AuthContext';
 import { collection, addDoc, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -35,6 +35,9 @@ export default function SellItem() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
 
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0); // track nested drag-enter/leave pairs
+
   const [formData, setFormData] = useState({
     title: '',
     price: '',
@@ -55,7 +58,7 @@ export default function SellItem() {
         
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data.sellerId !== user.uid && userData?.role !== 'admin') {
+          if (data.sellerId !== user.uid && !userData?.isAdmin) {
             showToast('You can only edit your own listings.', 'error');
             navigate('/dashboard');
             return;
@@ -99,50 +102,9 @@ export default function SellItem() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
-    const remainingSlots = 5 - selectedImages.length;
-    if (remainingSlots <= 0) {
-      showToast('Maximum of 5 images allowed', 'warning');
-      return;
-    }
-
-    const filesToProcess = Array.from(files).slice(0, remainingSlots);
-
-    if (files.length > remainingSlots) {
-      showToast(`Only adding the first ${remainingSlots} images to stay within the 5 image limit.`, 'info');
-    }
-
-    const newImages: SelectedImage[] = [];
-
-    for (let f of Array.from(filesToProcess)) {
-      let file = f as File;
-      const isHeic = isHeicFile(file);
-      const isStandardImage = file.type.startsWith('image/');
-
-      if (!isHeic && !isStandardImage) {
-        showToast(`"${file.name}" is not a recognized image file`, 'warning');
-        continue;
-      }
-
-      if (isHeic) {
-        showToast(`Converting "${file.name}" from HEIC...`, 'info');
-        file = await convertHeicToJpeg(file);
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        showToast(`"${file.name}" is over 5MB`, 'warning');
-        continue;
-      }
-
-      newImages.push({
-        id: Math.random().toString(36).substring(2, 9),
-        type: 'file',
-        file,
-        previewUrl: URL.createObjectURL(file)
-      });
-    }
-
-    setSelectedImages(prev => [...prev, ...newImages]);
+    await processFiles(Array.from(files));
+    // reset input so the same file can be re-selected
+    e.target.value = '';
   };
 
   const handleAddUrl = () => {
@@ -194,6 +156,103 @@ export default function SellItem() {
 
   const removeTag = (tagToRemove: string) => {
     setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+
+  // ─── Shared file processor (used by file-input, drag-drop, and paste) ──────
+  const processFiles = useCallback(async (files: File[]) => {
+    const remainingSlots = 5 - selectedImages.length;
+    if (remainingSlots <= 0) {
+      showToast('Maximum of 5 images allowed', 'warning');
+      return;
+    }
+
+    const filesToProcess = files.slice(0, remainingSlots);
+    if (files.length > remainingSlots) {
+      showToast(`Only adding the first ${remainingSlots} images to stay within the 5 image limit.`, 'info');
+    }
+
+    const newImages: SelectedImage[] = [];
+    for (let f of filesToProcess) {
+      let file = f as File;
+      const isHeic = isHeicFile(file);
+      const isStandardImage = file.type.startsWith('image/');
+
+      if (!isHeic && !isStandardImage) {
+        showToast(`"${file.name}" is not a recognized image file`, 'warning');
+        continue;
+      }
+      if (isHeic) {
+        showToast(`Converting "${file.name}" from HEIC...`, 'info');
+        file = await convertHeicToJpeg(file);
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        showToast(`"${file.name}" is over 5MB`, 'warning');
+        continue;
+      }
+      newImages.push({
+        id: Math.random().toString(36).substring(2, 9),
+        type: 'file',
+        file,
+        previewUrl: URL.createObjectURL(file),
+      });
+    }
+    if (newImages.length > 0) {
+      setSelectedImages(prev => [...prev, ...newImages]);
+    }
+  }, [selectedImages.length, showToast]);
+
+  // ─── Paste from clipboard (Ctrl+V / ⌘V) ────────────────────────────────────
+  useEffect(() => {
+    if (uploadMode !== 'upload') return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const imageFiles: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) imageFiles.push(file);
+        }
+      }
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        processFiles(imageFiles);
+        showToast('Image pasted from clipboard!', 'success');
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [uploadMode, processFiles, showToast]);
+
+  // ─── Drag-and-drop handlers ─────────────────────────────────────────────────
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    if (dragCounterRef.current === 1) setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) setIsDragging(false);
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // required to allow drop
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (uploadMode !== 'upload') return;
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/') || isHeicFile(f)
+    );
+    if (files.length === 0) {
+      showToast('No image files detected in drop', 'warning');
+      return;
+    }
+    processFiles(files);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -289,7 +348,13 @@ export default function SellItem() {
 
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Image upload section */}
-          <div className="space-y-4">
+          <div
+            className="space-y-4"
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40 ml-1">Product Pictures ({selectedImages.length}/5)</label>
               <div className="flex bg-surface-base rounded-lg p-0.5">
@@ -306,9 +371,10 @@ export default function SellItem() {
 
             {/* Grid of selected / uploaded images */}
             {selectedImages.length > 0 && (
+              <div className={`rounded-2xl transition-all ${isDragging && uploadMode === 'upload' ? 'ring-2 ring-brand-teal ring-offset-2 bg-brand-teal/5' : ''}`}>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
                 {selectedImages.map((img, idx) => (
-                  <motion.div layout key={img.id} className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-luxury-ink/5 border border-brand-teal/10 group shadow-sm">
+                  <motion.div layout key={img.id} className="relative aspect-4/3 rounded-2xl overflow-hidden bg-luxury-ink/5 border border-brand-teal/10 group shadow-sm">
                     <img src={img.previewUrl} alt={`Product preview ${idx + 1}`} className="w-full h-full object-cover" />
                     {idx === 0 && (
                       <div className="absolute top-3 left-3 bg-brand-teal text-white px-2.5 py-1 rounded-lg text-[8px] font-bold uppercase tracking-wider shadow-sm">
@@ -321,26 +387,33 @@ export default function SellItem() {
                   </motion.div>
                 ))}
                 {selectedImages.length < 5 && uploadMode === 'upload' && (
-                  <label className="group relative border-2 border-dashed border-luxury-ink/10 rounded-2xl aspect-[4/3] flex flex-col items-center justify-center p-4 transition-all hover:border-brand-teal hover:bg-brand-teal/5 cursor-pointer">
+                  <label className="group relative border-2 border-dashed border-luxury-ink/10 rounded-2xl aspect-4/3 flex flex-col items-center justify-center p-4 transition-all hover:border-brand-teal hover:bg-brand-teal/5 cursor-pointer">
                     <input type="file" accept="image/*,.heic,.heif" multiple onChange={handleFileSelect} className="hidden" />
                     <Upload className="text-luxury-ink/20 group-hover:text-brand-teal transition-colors" size={24} />
                     <p className="mt-2 text-[9px] font-bold uppercase tracking-wider text-luxury-ink/40 text-center">Add More</p>
                   </label>
                 )}
               </div>
+              {uploadMode === 'upload' && (
+                <p className="text-[10px] text-luxury-ink/20 mt-2 text-center">Drag images here or press Ctrl+V to paste</p>
+              )}
+              </div>
             )}
 
             {/* Main upload dropzone when list is empty */}
             {selectedImages.length === 0 && uploadMode === 'upload' && (
               <div className="relative">
-                <label className="group relative border-2 border-dashed border-luxury-ink/10 rounded-2xl p-12 transition-all hover:border-brand-teal hover:bg-brand-teal/5 cursor-pointer block">
+                <label className={`group relative border-2 border-dashed rounded-2xl p-12 transition-all cursor-pointer block ${isDragging ? 'border-brand-teal bg-brand-teal/10 scale-[1.01]' : 'border-luxury-ink/10 hover:border-brand-teal hover:bg-brand-teal/5'}`}>
                   <input type="file" accept="image/*,.heic,.heif" multiple onChange={handleFileSelect} className="hidden" />
                   <div className="flex flex-col items-center text-center">
-                    <div className="w-16 h-16 bg-surface-soft rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <Upload className="text-luxury-ink/40 group-hover:text-brand-teal transition-colors" size={24} />
+                    <div className={`w-16 h-16 bg-surface-soft rounded-full flex items-center justify-center mb-4 transition-transform ${isDragging ? 'scale-125 bg-brand-teal/10' : 'group-hover:scale-110'}`}>
+                      <Upload className={`transition-colors ${isDragging ? 'text-brand-teal' : 'text-luxury-ink/40 group-hover:text-brand-teal'}`} size={24} />
                     </div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/60 mb-1">Click to browse or drop images</p>
+                    <p className="text-xs font-bold uppercase tracking-widest text-luxury-ink/60 mb-1">
+                      {isDragging ? 'Drop images here' : 'Click to browse, drag & drop, or paste'}
+                    </p>
                     <p className="text-[10px] text-luxury-ink/30">Max 5 images • Max 5MB each • JPG, PNG, HEIC, WebP</p>
+                    <p className="text-[10px] text-luxury-ink/20 mt-1">Tip: Press Ctrl+V to paste an image from your clipboard</p>
                   </div>
                 </label>
               </div>
@@ -397,7 +470,7 @@ export default function SellItem() {
 
           <div className="space-y-2">
             <label className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/40 ml-1">Tags (Optional)</label>
-            <div className="w-full bg-surface-base border border-luxury-ink/5 rounded-xl py-2 px-3 focus-within:border-brand-teal transition-all min-h-[56px] flex flex-wrap gap-2 items-center">
+            <div className="w-full bg-surface-base border border-luxury-ink/5 rounded-xl py-2 px-3 focus-within:border-brand-teal transition-all min-h-14 flex flex-wrap gap-2 items-center">
               <AnimatePresence>
                 {tags.map((tag) => (
                   <motion.span 
@@ -422,7 +495,7 @@ export default function SellItem() {
                 onKeyDown={handleAddTag}
                 placeholder={tags.length < 10 ? "Type a tag and press Enter" : "Tag limit reached"}
                 disabled={tags.length >= 10}
-                className="flex-1 min-w-[150px] bg-transparent outline-none text-sm font-medium px-2 py-2 placeholder-luxury-ink/30"
+                className="flex-1 min-w-37.5 bg-transparent outline-none text-sm font-medium px-2 py-2 placeholder-luxury-ink/30"
               />
             </div>
             <p className="text-[10px] text-luxury-ink/30 ml-1">Add tags to make your item more searchable (e.g., "physics", "jeemains", "cycle"). Press Enter to add.</p>
