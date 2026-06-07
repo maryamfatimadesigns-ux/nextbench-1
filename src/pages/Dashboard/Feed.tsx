@@ -1552,7 +1552,7 @@ export default function Feed() {
                 )}
               </AnimatePresence>
 
-              <div className="p-6 md:p-8 overflow-y-visible flex-1 min-h-[60vh] flex flex-col">
+              <div className="p-6 md:p-8 overflow-y-auto flex-1 flex flex-col min-h-0">
                 <form id="create-post-form" onSubmit={handleCreatePost} className="flex flex-col h-full relative flex-1">
                   <input type="hidden" name="type" value={selectedPostType} />
                   <input type="hidden" name="privacy" value={privacy} />
@@ -1583,7 +1583,7 @@ export default function Feed() {
                     </div>
                   </div>
 
-                  <div className="space-y-4 flex-1 overflow-y-auto no-scrollbar px-1 flex flex-col">
+                  <div className="space-y-4 flex-1 px-1 flex flex-col">
                     <input
                       name="title"
                       type="text"
@@ -1697,7 +1697,7 @@ export default function Feed() {
                   </div>
 
                   {/* Bottom Toolbar */}
-                  <div className="mt-4 pt-4 border-t border-luxury-ink/5 flex flex-wrap items-center justify-between gap-y-3 relative px-1">
+                  <div className="mt-4 pt-4 border-t border-luxury-ink/5 flex flex-wrap items-center justify-between gap-y-3 relative px-1 sticky bottom-0 bg-surface-card pb-2">
                     <div className="flex items-center gap-1 relative">
                       <label className="p-2.5 rounded-full hover:bg-surface-soft text-luxury-ink/50 hover:text-brand-teal transition-colors cursor-pointer group relative">
                         <ImageIcon size={22} />

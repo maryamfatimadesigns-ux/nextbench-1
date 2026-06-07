@@ -96,17 +96,25 @@ export default function PollDisplay({ postId, poll, compact = false }: PollDispl
   };
 
   const handleVote = async (choiceIndex: number) => {
-    if (!user || hasVoted || isExpired || voting) return;
+    if (!user || isExpired || voting) return;
     setVoting(true);
     try {
-      const newVotes = { ...localVotes, [user.uid]: choiceIndex };
+      let newVotes: Record<string, number>;
+      if (userVote === choiceIndex) {
+        // Same option → unvote
+        newVotes = { ...localVotes };
+        delete newVotes[user.uid];
+        showToast('Vote removed.', 'info');
+      } else {
+        // New option or first vote
+        newVotes = { ...localVotes, [user.uid]: choiceIndex };
+        if (hasVoted) showToast('Vote changed!', 'success');
+      }
       setLocalVotes(newVotes);
-      await updateDoc(doc(db, 'posts', postId), {
-        'poll.votes': newVotes,
-      });
+      await updateDoc(doc(db, 'posts', postId), { 'poll.votes': newVotes });
     } catch (err) {
       setLocalVotes(poll.votes || {});
-      showToast('Failed to vote. Please try again.', 'error');
+      showToast('Failed to update vote. Please try again.', 'error');
     } finally {
       setVoting(false);
     }
@@ -125,14 +133,14 @@ export default function PollDisplay({ postId, poll, compact = false }: PollDispl
             key={i}
             type="button"
             onClick={() => handleVote(i)}
-            disabled={hasVoted || isExpired || voting}
+            disabled={isExpired || voting}
             className={`relative w-full text-left rounded-xl overflow-hidden transition-all ${
-              showResults
+              isExpired
                 ? 'cursor-default'
                 : 'cursor-pointer hover:border-brand-teal'
             } border ${
               userVote === i
-                ? 'border-brand-teal bg-brand-teal/5'
+                ? 'border-brand-teal bg-brand-teal/5 hover:bg-brand-pink/5 hover:border-brand-pink'
                 : 'border-luxury-ink/10 hover:bg-surface-soft/50'
             } ${compact ? 'py-2 px-3' : 'py-2.5 px-4'}`}
           >
@@ -179,6 +187,9 @@ export default function PollDisplay({ postId, poll, compact = false }: PollDispl
           <span className="flex items-center gap-1 text-[12px] font-semibold text-luxury-ink/40">
             <Clock size={12} /> {getTimeRemaining()}
           </span>
+          {hasVoted && !isExpired && (
+            <span className="text-[11px] text-luxury-ink/30 italic">Tap to change or unvote</span>
+          )}
         </div>
         {showResults && totalVotes > 0 && (
           <button
