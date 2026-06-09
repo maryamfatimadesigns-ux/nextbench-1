@@ -67,6 +67,7 @@ interface Product {
   sellerId: string;
   sellerName: string;
   sellerSchool: string;
+  sellerProfilePicture?: string;
   city?: string;
   createdAt: any;
 }
@@ -229,7 +230,7 @@ function PostDetailModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
+      className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
       style={{ background: 'var(--color-overlay-heavy)' }}
       onClick={onClose}
     >
@@ -612,20 +613,33 @@ export default function Feed() {
       collection(db, 'products'),
       where('status', 'in', ['available', 'sold'])
     );
+    const sellerCache: Record<string, any> = {};
+
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       try {
         const fetchedProducts: Product[] = [];
-        
-        // Removed N+1 getDoc queries for sellers to improve speed
-        // Relying purely on denormalized data.
+
+        const uncachedIds = new Set<string>();
+        snapshot.forEach(docSnap => {
+          const sellerId = docSnap.data().sellerId;
+          if (sellerId && !sellerCache[sellerId]) uncachedIds.add(sellerId);
+        });
+        if (uncachedIds.size > 0) {
+          await Promise.all(Array.from(uncachedIds).map(async (uid) => {
+            const uDoc = await getDoc(doc(db, 'users', uid));
+            sellerCache[uid] = uDoc.exists() ? uDoc.data() : {};
+          }));
+        }
 
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
+          const sellerData = sellerCache[data.sellerId] || {};
           fetchedProducts.push({
             id: docSnap.id,
             ...data,
-            sellerName: data.sellerName || 'Unknown User',
-            sellerSchool: data.sellerSchool || 'Unknown School',
+            sellerName: sellerData.name || data.sellerName || 'Unknown User',
+            sellerSchool: sellerData.school || data.sellerSchool || 'Unknown School',
+            sellerProfilePicture: sellerData.profilePicture || data.sellerProfilePicture || null,
           } as Product);
         });
 
@@ -736,6 +750,29 @@ export default function Feed() {
     });
     return () => unsubscribe();
   }, [user]);
+
+  // ─── Paste to add image ───────────────────────────────
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const pastedImages: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) pastedImages.push(file);
+        }
+      }
+      if (pastedImages.length > 0) {
+        const dt = new DataTransfer();
+        pastedImages.forEach(f => dt.items.add(f));
+        handleFilesSelected(dt.files);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [isModalOpen]);
 
   // ─── Image Crop Flow ──────────────────────────────────
 
@@ -1216,7 +1253,7 @@ export default function Feed() {
         id: post.id,
         title: post.title,
         description: post.content || '',
-        image: post.images?.[0] || undefined,
+        image: post.imageUrls?.[0] || post.imageUrl || undefined,
         authorName: post.authorName || 'Unknown User'
       }
     });
@@ -1507,7 +1544,7 @@ export default function Feed() {
                 setPendingFiles([]);
               }
             }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
@@ -1567,17 +1604,17 @@ export default function Feed() {
                   {/* Top Bar with Avatar */}
                   <div className="flex items-center gap-3 mb-6 px-1">
                     <div className="w-10 h-10 rounded-full bg-brand-teal/10 flex items-center justify-center text-brand-teal font-bold text-sm overflow-hidden shrink-0">
-                      {user?.photoURL ? (
-                        <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      {userData?.profilePicture ? (
+                        <img src={getOptimizedImageUrl(userData.profilePicture)} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
-                        userData?.firstName?.[0]?.toUpperCase() || <Users size={16} />
+                        userData?.name?.[0]?.toUpperCase() || <Users size={16} />
                       )}
                     </div>
                     <div className="flex flex-col">
                       <span className="text-[15px] font-semibold text-luxury-ink">
                         {selectedPostType === 'confession' && isAnonymous 
                           ? userData?.anonymousPersonaName || 'Anonymous' 
-                          : (userData?.firstName ? `${userData.firstName} ${userData.lastName || ''}`.trim() : user?.displayName || 'User')}
+                          : (userData?.name || 'User')}
                       </span>
                       {selectedPostType === 'confession' && !isAnonymous && (
                         <span className="text-[11px] text-amber-500 font-semibold flex items-center gap-1">
@@ -1719,7 +1756,7 @@ export default function Feed() {
                           }}
                           className="hidden"
                         />
-                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-luxury-ink text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Image</span>
+                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-gray-100 text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Image</span>
                       </label>
                       <button
                         type="button"
@@ -1727,7 +1764,7 @@ export default function Feed() {
                         className={`p-2.5 rounded-full transition-colors group relative ${showPollCreator ? 'bg-brand-teal/10 text-brand-teal' : 'hover:bg-surface-soft text-luxury-ink/50 hover:text-brand-teal'}`}
                       >
                         <BarChart3 size={22} />
-                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-luxury-ink text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Poll</span>
+                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-gray-100 text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Poll</span>
                       </button>
 
                       <div className="relative">

@@ -19,6 +19,7 @@ interface Product {
   sellerId: string;
   sellerName: string;
   sellerSchool: string;
+  sellerProfilePicture?: string;
   city?: string;
   createdAt: any;
 }
@@ -76,11 +77,11 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId }: Pr
         <div className={`p-4 transition-all duration-300 relative border-b ${
             product.status === 'sold'
               ? 'opacity-75 pointer-events-none'
-              : 'hover:bg-gradient-to-br hover:from-brand-teal/5 hover:to-brand-pink/5'
+              : 'hover:bg-linear-to-br hover:from-brand-teal/5 hover:to-brand-pink/5'
           }`} style={{ borderColor: 'var(--color-border)' }}>
           
           {/* Subtle Accent Glow */}
-          <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-brand-teal/20 to-transparent"></div>
+          <div className="absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-brand-teal/20 to-transparent"></div>
           
           {/* Header */}
           <div className="flex items-center gap-3 mb-4">
@@ -88,9 +89,18 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId }: Pr
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/profile/${product.sellerId}`); }} 
               className="shrink-0 cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-full bg-surface-soft flex items-center justify-center text-brand-teal font-semibold text-sm overflow-hidden">
-                {product.sellerName[0]?.toUpperCase()}
-              </div>
+            <div className="w-9 h-9 rounded-full bg-surface-soft flex items-center justify-center text-brand-teal font-semibold text-sm overflow-hidden">
+              {product.sellerProfilePicture ? (
+                <img 
+                  src={getOptimizedImageUrl(product.sellerProfilePicture)} 
+                  alt={product.sellerName}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                product.sellerName[0]?.toUpperCase()
+              )}
+            </div>
             </div>
             <div className="flex-1 min-w-0">
               <div 
@@ -114,7 +124,7 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId }: Pr
           <h3 className="text-[15px] font-semibold text-luxury-ink mb-3 truncate">{product.title}</h3>
 
           {/* Image */}
-          <div className="aspect-[4/3] overflow-hidden relative mb-4 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--color-surface-soft) 0%, rgba(var(--color-brand-teal-rgb), 0.05) 100%)' }}>
+          <div className="aspect-4/3 overflow-hidden relative mb-4 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--color-surface-soft) 0%, rgba(var(--color-brand-teal-rgb), 0.05) 100%)' }}>
             <img 
               src={getOptimizedImageUrl(product.image)} 
               alt={product.title}

@@ -22,6 +22,7 @@ interface Post {
   reactionsCount?: Record<string, number>;
   school: string;
   type: string;
+  status: string;
   imageUrl?: string;
   imageUrls?: string[];
   upvotesCount: number;
@@ -95,15 +96,8 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
         className={`post-card-clean cursor-pointer p-4 sm:p-6 md:p-8 flex flex-col w-full min-w-0 overflow-x-hidden ${post.type === 'confession' ? 'is-confession' : ''}`}
         onClick={onClick}
       >
-        {/* Title */}
-        {post.title && (
-          <h3 className="text-[17px] md:text-[19px] font-semibold text-luxury-ink/90 leading-snug tracking-normal mb-2 wrap-break-word">
-            {post.title}
-          </h3>
-        )}
-
         {/* Metadata Row */}
-        <div className="mb-4" onClick={handleProfileClick}>
+        <div className="mb-3" onClick={handleProfileClick}>
           <div className="flex items-center gap-2 min-w-0">
             {/* Avatar */}
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold overflow-hidden shrink-0 ${displayInfo.isAnonymous ? 'bg-purple-500/10 text-purple-600' : 'bg-brand-teal/10 text-brand-teal'}`}>
@@ -132,6 +126,13 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
             </div>
           </div>
         </div>
+
+        {/* Title */}
+        {post.title && (
+          <h3 className="text-[17px] md:text-[19px] font-semibold text-luxury-ink/90 leading-snug tracking-normal mb-2 wrap-break-word">
+            {post.title}
+          </h3>
+        )}
 
         {/* Content Preview */}
         <div className="mb-5">

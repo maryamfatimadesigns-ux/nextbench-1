@@ -222,7 +222,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-md"
+        className="fixed inset-0 z-100 flex items-center justify-center p-4 backdrop-blur-md"
         style={{ background: 'var(--color-overlay-heavy)' }}
         onClick={onClose}
       >
@@ -242,9 +242,9 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
             </button>
           </div>
 
-          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-[400px]">
+          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-100">
             {/* Sidebar */}
-            <div className="w-[140px] sm:w-[200px] shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="w-35 sm:w-50 shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
               {[
                 { id: 'general', label: 'General', icon: Settings },
                 { id: 'account', label: 'Account', icon: User },

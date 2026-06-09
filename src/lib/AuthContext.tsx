@@ -13,6 +13,7 @@ export interface UserData {
   verificationStatus: 'pending' | 'approved' | 'rejected';
   reputation: number;
   isAdmin: boolean;
+  role?: 'admin' | 'moderator' | 'user';
   profilePicture?: string | null;
   idCardUrl?: string | null;
   selfieUrl?: string | null;
@@ -21,6 +22,14 @@ export interface UserData {
   city?: string;
   createdAt: string;
   updatedAt: string;
+  // Name fields
+  firstName?: string | null;
+  lastName?: string | null;
+  // Anonymous posting
+  anonymousPersonaName?: string | null;
+  lastUsernameChange?: { toDate: () => Date } | null;
+  // Chat privacy settings
+  chatPrivacy?: { followersOnly?: boolean } | null;
   // Organization account fields
   accountType?: 'student' | 'organization';
   orgName?: string | null;
