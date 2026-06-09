@@ -313,6 +313,7 @@ export default function SellItem() {
           sellerName: userData.name,
           sellerSchool: userData.school,
           status: 'pending',
+          sellerProfilePicture: userData?.profilePicture || null,
           createdAt: serverTimestamp()
         });
         showToast('Listing submitted for admin review!', 'success');
