@@ -27,6 +27,9 @@ export interface UserData {
   lastName?: string | null;
   // Anonymous posting
   anonymousPersonaName?: string | null;
+  lastUsernameChange?: { toDate: () => Date } | null;
+  // Chat privacy settings
+  chatPrivacy?: { followersOnly?: boolean } | null;
   // Organization account fields
   accountType?: 'student' | 'organization';
   orgName?: string | null;
