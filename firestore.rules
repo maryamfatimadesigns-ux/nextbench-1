@@ -196,10 +196,14 @@ service cloud.firestore {
         && request.auth.uid in incoming().participants
         && isValidChatRoom(incoming());
         
-      allow update: if isVerified() && isValidId(roomId)
+      allow update: if isSignedIn() && isValidId(roomId)
         && request.auth.uid in existing().participants
-        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy'])
+        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy', 'status', 'requestedBy'])
           || isAdmin());
+
+      allow delete: if isVerified() && isValidId(roomId)
+        && request.auth.uid in existing().participants
+        && existing().get('status', '') == 'pending';
 
       match /messages/{messageId} {
         allow list: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants;
@@ -219,6 +223,10 @@ service cloud.firestore {
              (incoming().diff(existing()).affectedKeys().hasOnly(['isDeletedForEveryone', 'text', 'image']) 
               && request.auth.uid == existing().senderId)
           );
+
+        allow delete: if isVerified() 
+          && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          && get(/databases/$(database)/documents/chatRooms/$(roomId)).data.get('status', '') == 'pending';
       }
     }
 

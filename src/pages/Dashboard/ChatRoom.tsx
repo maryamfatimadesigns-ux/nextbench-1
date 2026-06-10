@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Send, ArrowLeft, MoreVertical, ShieldCheck, User, Package, Flag, Camera, X, CornerDownRight, Pin, CheckCircle2, Circle, Copy, Trash2, Download } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, getDocs, where, writeBatch, arrayUnion, arrayRemove, limit } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, getDocs, where, writeBatch, arrayUnion, arrayRemove, limit, deleteField } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useToast } from '../../lib/ToastContext';
 import { uploadChatImage } from '../../lib/storage';
@@ -369,9 +369,16 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
   const handleAcceptRequest = async () => {
     if (!roomId) return;
     try {
-      await updateDoc(doc(db, 'chatRooms', roomId), { status: 'active', requestedBy: null });
+      await updateDoc(doc(db, 'chatRooms', roomId), { 
+        status: 'active', 
+        requestedBy: deleteField(),
+        updatedAt: serverTimestamp() 
+      });
       showToast('Chat request accepted', 'success');
-    } catch { showToast('Failed to accept request', 'error'); }
+    } catch (err) { 
+      console.error('Accept request error:', err);
+      showToast('Failed to accept request', 'error'); 
+    }
   };
 
   const handleDeclineRequest = async () => {
@@ -385,7 +392,10 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
       await batch.commit();
       showToast('Chat request declined', 'info');
       navigate('/messages');
-    } catch { showToast('Failed to decline request', 'error'); }
+    } catch (err) { 
+      console.error('Decline request error:', err);
+      showToast('Failed to decline request', 'error'); 
+    }
   };
 
   const isPendingRequester = roomData?.status === 'pending' && roomData?.requestedBy === user?.uid;
