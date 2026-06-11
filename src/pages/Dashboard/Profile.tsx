@@ -931,11 +931,9 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                 <div className="min-w-0">
                   <h3 className="text-base font-bold text-luxury-ink mb-0.5">Invite Friends</h3>
                   <p className="text-xs text-luxury-ink/50">Share Nextbench with your campus network</p>
-                  {referralCount > 0 && (
-                    <p className="text-xs font-semibold text-brand-teal mt-1">
-                      {referralCount} {referralCount === 1 ? 'person' : 'people'} joined using your link!
-                    </p>
-                  )}
+                  <p className={`text-xs font-semibold mt-1 ${referralCount > 0 ? 'text-brand-teal' : 'text-luxury-ink/40'}`}>
+                    {referralCount} {referralCount === 1 ? 'person' : 'people'} joined using your link
+                  </p>
                 </div>
               </div>
               
