@@ -293,6 +293,19 @@ function PostDetailModal({
     return map;
   }, [replies]);
 
+  const [commentSort, setCommentSort] = useState<'recent' | 'top' | 'discussed'>('recent');
+
+  const sortedRootReplies = useMemo(() => {
+    const roots = repliesMap['root'] || [];
+    if (commentSort === 'top') {
+      return [...roots].sort((a, b) => (b.upvotesCount || 0) - (a.upvotesCount || 0));
+    }
+    if (commentSort === 'discussed') {
+      return [...roots].sort((a, b) => (repliesMap[b.id]?.length || 0) - (repliesMap[a.id]?.length || 0));
+    }
+    return roots;
+  }, [repliesMap, commentSort]);
+
   useEffect(() => {
     if (user && post.type === 'confession') {
       getUserReaction(post.id, user.uid).then(r => setUserReaction(r));
@@ -409,7 +422,27 @@ function PostDetailModal({
 
           {/* Replies Section */}
           <div className="mt-6">
-            <h3 className="text-lg font-bold text-luxury-ink mb-6">Discussions</h3>
+            <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+              <h3 className="text-lg font-bold text-luxury-ink">Discussions</h3>
+              {replies.length > 1 && (
+                <div className="flex items-center gap-1 p-0.5 bg-surface-soft rounded-xl text-[11px] font-bold">
+                  {(['recent', 'top', 'discussed'] as const).map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setCommentSort(s)}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        commentSort === s
+                          ? 'bg-surface-card text-luxury-ink shadow-sm'
+                          : 'text-luxury-ink/40 hover:text-luxury-ink'
+                      }`}
+                    >
+                      {s === 'recent' ? 'Recent' : s === 'top' ? 'Top' : 'Active'}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {replies.length === 0 ? (
               <div className="text-center py-6">
                 <MessageSquare className="mx-auto text-luxury-ink/10 mb-2" size={24} />
@@ -417,7 +450,7 @@ function PostDetailModal({
               </div>
             ) : (
               <div className="space-y-4 mb-6">
-                {repliesMap['root']?.map(reply => (
+                {sortedRootReplies.map(reply => (
                   <Comment
                     key={reply.id}
                     reply={reply}
