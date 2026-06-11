@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import PollDisplay from './PollDisplay';
 import { useNavigate } from 'react-router-dom';
-import { Heart, MessageCircle, Share2, Bookmark, Flag, Flame } from 'lucide-react';
+import { Heart, MessageCircle, Share2, Bookmark, Flag, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { getOptimizedImageUrl } from '../../lib/utils';
 import { POST_TYPES } from '../../pages/Dashboard/Feed';
@@ -92,6 +92,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
     : (post.imageUrl ? [post.imageUrl] : []);
   const hasImage = postImageUrls.length > 0;
   const [showReport, setShowReport] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const navigate = useNavigate();
 
   const displayInfo = getPersonaDisplay(post, false);
@@ -171,17 +172,47 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
 
         {/* Image */}
         {hasImage && (
-          <div className="relative mt-2 mb-6 w-full rounded-[20px] overflow-hidden">
+          <div className="relative mt-2 mb-6 w-full rounded-[20px] overflow-hidden group bg-black/5">
             <img
-              src={getOptimizedImageUrl(postImageUrls[0])}
-              alt={post.title}
+              src={getOptimizedImageUrl(postImageUrls[currentImageIndex])}
+              alt={post.title || "Post image"}
               className="w-full h-auto"
               referrerPolicy="no-referrer"
             />
             {postImageUrls.length > 1 && (
-              <div className="absolute top-3 right-3 bg-luxury-ink/60 backdrop-blur-md text-white px-2.5 py-1 rounded-md text-[11px] font-bold tracking-widest">
-                1/{postImageUrls.length}
-              </div>
+              <>
+                <div className="absolute top-3 right-3 bg-luxury-ink/60 backdrop-blur-md text-white px-2.5 py-1 rounded-md text-[11px] font-bold tracking-widest z-10 pointer-events-none">
+                  {currentImageIndex + 1}/{postImageUrls.length}
+                </div>
+                
+                {/* Navigation arrows */}
+                {currentImageIndex > 0 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setCurrentImageIndex(prev => prev - 1); }}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
+                )}
+                {currentImageIndex < postImageUrls.length - 1 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setCurrentImageIndex(prev => prev + 1); }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                  >
+                    <ChevronRight size={18} />
+                  </button>
+                )}
+
+                {/* Bottom dots indicator */}
+                <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5 z-10 pointer-events-none">
+                  {postImageUrls.map((_, idx) => (
+                    <div
+                      key={idx}
+                      className={`h-1.5 rounded-full transition-all ${idx === currentImageIndex ? 'w-4 bg-white shadow-sm' : 'w-1.5 bg-white/60'}`}
+                    />
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}
