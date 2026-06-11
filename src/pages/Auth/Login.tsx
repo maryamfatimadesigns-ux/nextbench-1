@@ -205,9 +205,9 @@ export default function Login() {
           </form>
 
           <div className="relative py-4 flex items-center">
-            <div className="flex-grow border-t border-luxury-ink/10"></div>
-            <span className="flex-shrink-0 mx-4 text-luxury-ink/30 text-[10px] font-bold uppercase tracking-widest">Or</span>
-            <div className="flex-grow border-t border-luxury-ink/10"></div>
+            <div className="grow border-t border-luxury-ink/10"></div>
+            <span className="shrink-0 mx-4 text-luxury-ink/30 text-[10px] font-bold uppercase tracking-widest">Or</span>
+            <div className="grow border-t border-luxury-ink/10"></div>
           </div>
 
           <form onSubmit={handleEmailLogin} className="space-y-4">
