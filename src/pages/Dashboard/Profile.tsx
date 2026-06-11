@@ -425,13 +425,32 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     }
   };
 
-  const handleCopyUsername = () => {
+  const handleCopyUsername = async () => {
     const un = profileUser?.username;
     if (!un) return;
-    navigator.clipboard.writeText(`nextbench.in/u/${un}`);
-    setCopiedUsername(true);
-    showToast('Profile link copied!', 'success');
-    setTimeout(() => setCopiedUsername(false), 2000);
+    const link = `nextbench.in/u/${un}`;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(link);
+      } else {
+        // Fallback for iOS in-app browsers (Instagram, etc.)
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedUsername(true);
+      showToast('Profile link copied!', 'success');
+      setTimeout(() => setCopiedUsername(false), 2000);
+    } catch {
+      showToast('Failed to copy link', 'error');
+    }
   };
 
   // ─── Follow List Modal ─────────────────────────────────
@@ -505,9 +524,10 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
   if (!user || !profileUser) return <div className="pt-32 text-center text-xs font-bold uppercase tracking-widest text-luxury-ink/30">Loading profile...</div>;
 
-  const userName = profileUser.name || 'Unknown User';
-  const [firstName, ...lastNameParts] = userName.split(' ');
-  const lastName = lastNameParts.join(' ');
+  const userName = (profileUser.name && typeof profileUser.name === 'string') ? profileUser.name : 'Unknown User';
+  const nameParts = userName.split(' ');
+  const firstName = nameParts[0] || '';
+  const lastName = nameParts.slice(1).join(' ');
 
   const activeListings = myListings.filter(p => p.status === 'available');
   const pendingListings = myListings.filter(p => p.status === 'pending');
