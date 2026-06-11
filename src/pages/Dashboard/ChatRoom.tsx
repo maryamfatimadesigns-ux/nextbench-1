@@ -13,6 +13,7 @@ import { createNotification, isChatMessageNotification } from '../../lib/notific
 import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import ReportModal from '../../components/ui/ReportModal';
 import MessageText from '../../components/ui/MessageText';
+import MessageReactions from '../../components/ui/MessageReactions';
 import { useUserPresence } from '../../lib/presence';
 
 interface Message {
@@ -25,6 +26,7 @@ interface Message {
   isDeletedForEveryone?: boolean;
   replyToId?: string;
   replyToText?: string;
+  reactions?: Record<string, string[]>;
   sharedPost?: {
     id: string;
     title: string;
@@ -90,6 +92,7 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null);
+  const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -193,7 +196,11 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
   }, [messages]);
 
   useEffect(() => {
-    const handleClickOutside = () => { setSelectedMessageId(null); setMenuPosition(null); };
+    const handleClickOutside = () => {
+      setSelectedMessageId(null);
+      setMenuPosition(null);
+      setActiveReactionMsgId(null);
+    };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
@@ -369,15 +376,15 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
   const handleAcceptRequest = async () => {
     if (!roomId) return;
     try {
-      await updateDoc(doc(db, 'chatRooms', roomId), { 
-        status: 'active', 
+      await updateDoc(doc(db, 'chatRooms', roomId), {
+        status: 'active',
         requestedBy: deleteField(),
-        updatedAt: serverTimestamp() 
+        updatedAt: serverTimestamp()
       });
       showToast('Chat request accepted', 'success');
-    } catch (err) { 
+    } catch (err) {
       console.error('Accept request error:', err);
-      showToast('Failed to accept request', 'error'); 
+      showToast('Failed to accept request', 'error');
     }
   };
 
@@ -392,9 +399,9 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
       await batch.commit();
       showToast('Chat request declined', 'info');
       navigate('/messages');
-    } catch (err) { 
+    } catch (err) {
       console.error('Decline request error:', err);
-      showToast('Failed to decline request', 'error'); 
+      showToast('Failed to decline request', 'error');
     }
   };
 
@@ -501,92 +508,106 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               key={msg.id}
-              className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group items-center gap-2`}
+              className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} relative group gap-0.5`}
             >
-              {isSelectMode && !isMe && (
-                <button onClick={() => toggleMessageSelection(msg.id)} className="p-2 shrink-0">
-                  {isSelected ? <CheckCircle2 className="text-brand-teal" size={20} /> : <Circle className="text-luxury-ink/20" size={20} />}
-                </button>
-              )}
-
-              <div
-                data-msg-id={msg.id}
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  if (isSelectMode) { toggleMessageSelection(msg.id); return; }
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const pos = spaceBelow < 220
-                    ? { bottom: window.innerHeight - rect.top + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) }
-                    : { top: rect.bottom + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) };
-                  setMenuPosition(selectedMessageId === msg.id ? null : pos);
-                  setSelectedMessageId(selectedMessageId === msg.id ? null : msg.id);
-                }}
-                onContextMenu={(e: React.MouseEvent) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const pos = spaceBelow < 220
-                    ? { bottom: window.innerHeight - rect.top + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) }
-                    : { top: rect.bottom + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) };
-                  setMenuPosition(selectedMessageId === msg.id ? null : pos);
-                  setSelectedMessageId(selectedMessageId === msg.id ? null : msg.id);
-                }}
-                className={`max-w-[75%] px-5 py-3.5 rounded-2xl text-sm font-medium cursor-pointer relative shadow-sm ${isMe ? 'bubble-mine rounded-tr-sm' : 'bubble-theirs rounded-tl-sm'}`}
-                style={!isMe ? { borderColor: 'var(--color-border)' } : undefined}
-              >
-                {!isDeleted && msg.replyToText && (
-                  <div className={`text-xs mb-2 p-2 rounded-lg border-l-2 ${isMe ? 'bg-surface-base/20 border-surface-base/40' : 'bg-surface-soft border-brand-teal'}`}>
-                    <p className="opacity-70 line-clamp-2">{msg.replyToText}</p>
-                  </div>
+              <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} items-center gap-2 w-full`}>
+                {isSelectMode && !isMe && (
+                  <button onClick={() => toggleMessageSelection(msg.id)} className="p-2 shrink-0">
+                    {isSelected ? <CheckCircle2 className="text-brand-teal" size={20} /> : <Circle className="text-luxury-ink/20" size={20} />}
+                  </button>
                 )}
 
-                {isDeleted ? (
-                  <p className="italic opacity-60 flex items-center gap-2 text-xs">
-                    <X size={14} /> This message was deleted
-                  </p>
-                ) : (
-                  <>
-                    {msg.image && (
-                      <div className="mb-2 rounded-lg overflow-hidden border border-luxury-ink/5 bg-surface-base">
-                        <img
-                          src={getOptimizedImageUrl(msg.image)}
-                          alt="Shared"
-                          className="max-w-full max-h-300px object-contain hover:opacity-90 transition-opacity"
-                          onClick={(e) => { e.stopPropagation(); setViewingImage(getOptimizedImageUrl(msg.image!)); }}
-                          referrerPolicy="no-referrer"
-                          onLoad={scrollToBottom}
-                        />
-                      </div>
-                    )}
-                    {msg.sharedPost && (
-                      <Link to={`/post/${msg.sharedPost.id}`} className="block mb-2 rounded-xl overflow-hidden border border-luxury-ink/10 bg-surface-base hover:opacity-90 transition-opacity">
-                        {msg.sharedPost.image && (
-                          <div className="w-full h-32 bg-luxury-ink/5">
-                            <img src={getOptimizedImageUrl(msg.sharedPost.image)} alt="Shared Post" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          </div>
-                        )}
-                        <div className="p-3">
-                          <p className="text-[10px] font-bold text-luxury-ink/40 uppercase tracking-widest mb-1">{msg.sharedPost.authorName}</p>
-                          <p className="text-sm font-bold text-luxury-ink line-clamp-1">{msg.sharedPost.title}</p>
-                          {msg.sharedPost.description && <p className="text-xs text-luxury-ink/60 line-clamp-2 mt-1">{msg.sharedPost.description}</p>}
+                <div
+                  data-msg-id={msg.id}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    if (isSelectMode) { toggleMessageSelection(msg.id); return; }
+                    // Close reaction picker when tapping bubble
+                    setActiveReactionMsgId(null);
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    const spaceBelow = window.innerHeight - rect.bottom;
+                    const pos = spaceBelow < 220
+                      ? { bottom: window.innerHeight - rect.top + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) }
+                      : { top: rect.bottom + 4, ...(isMe ? { right: window.innerWidth - rect.right } : { left: rect.left }) };
+                    setMenuPosition(selectedMessageId === msg.id ? null : pos);
+                    setSelectedMessageId(selectedMessageId === msg.id ? null : msg.id);
+                  }}
+                  onContextMenu={(e: React.MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Long-press / right-click → open reaction quick bar instead of context menu
+                    setActiveReactionMsgId(prev => prev === msg.id ? null : msg.id);
+                    setSelectedMessageId(null);
+                    setMenuPosition(null);
+                  }}
+                  className={`max-w-[75%] px-5 py-3.5 rounded-2xl text-sm font-medium cursor-pointer relative shadow-sm ${isMe ? 'bubble-mine rounded-tr-sm' : 'bubble-theirs rounded-tl-sm'}`}
+                  style={!isMe ? { borderColor: 'var(--color-border)' } : undefined}
+                >
+                  {!isDeleted && msg.replyToText && (
+                    <div className={`text-xs mb-2 p-2 rounded-lg border-l-2 ${isMe ? 'bg-surface-base/20 border-surface-base/40' : 'bg-surface-soft border-brand-teal'}`}>
+                      <p className="opacity-70 line-clamp-2">{msg.replyToText}</p>
+                    </div>
+                  )}
+
+                  {isDeleted ? (
+                    <p className="italic opacity-60 flex items-center gap-2 text-xs">
+                      <X size={14} /> This message was deleted
+                    </p>
+                  ) : (
+                    <>
+                      {msg.image && (
+                        <div className="mb-2 rounded-lg overflow-hidden border border-luxury-ink/5 bg-surface-base">
+                          <img
+                            src={getOptimizedImageUrl(msg.image)}
+                            alt="Shared"
+                            className="max-w-full max-h-300px object-contain hover:opacity-90 transition-opacity"
+                            onClick={(e) => { e.stopPropagation(); setViewingImage(getOptimizedImageUrl(msg.image!)); }}
+                            referrerPolicy="no-referrer"
+                            onLoad={scrollToBottom}
+                          />
                         </div>
-                      </Link>
-                    )}
-                    {msg.text && <MessageText text={msg.text} />}
-                  </>
-                )}
+                      )}
+                      {msg.sharedPost && (
+                        <Link to={`/post/${msg.sharedPost.id}`} className="block mb-2 rounded-xl overflow-hidden border border-luxury-ink/10 bg-surface-base hover:opacity-90 transition-opacity">
+                          {msg.sharedPost.image && (
+                            <div className="w-full h-32 bg-luxury-ink/5">
+                              <img src={getOptimizedImageUrl(msg.sharedPost.image)} alt="Shared Post" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            </div>
+                          )}
+                          <div className="p-3">
+                            <p className="text-[10px] font-bold text-luxury-ink/40 uppercase tracking-widest mb-1">{msg.sharedPost.authorName}</p>
+                            <p className="text-sm font-bold text-luxury-ink line-clamp-1">{msg.sharedPost.title}</p>
+                            {msg.sharedPost.description && <p className="text-xs text-luxury-ink/60 line-clamp-2 mt-1">{msg.sharedPost.description}</p>}
+                          </div>
+                        </Link>
+                      )}
+                      {msg.text && <MessageText text={msg.text} />}
+                    </>
+                  )}
 
-                <div className={`text-[10px] mt-1.5 opacity-30 ${isMe ? 'text-right' : 'text-left'}`}>
-                  {msg.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...'}
+                  <div className={`text-[10px] mt-1.5 opacity-30 ${isMe ? 'text-right' : 'text-left'}`}>
+                    {msg.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...'}
+                  </div>
                 </div>
+
+                {isSelectMode && isMe && (
+                  <button onClick={() => toggleMessageSelection(msg.id)} className="p-2 shrink-0">
+                    {isSelected ? <CheckCircle2 className="text-brand-teal" size={20} /> : <Circle className="text-luxury-ink/20" size={20} />}
+                  </button>
+                )}
               </div>
 
-              {isSelectMode && isMe && (
-                <button onClick={() => toggleMessageSelection(msg.id)} className="p-2 shrink-0">
-                  {isSelected ? <CheckCircle2 className="text-brand-teal" size={20} /> : <Circle className="text-luxury-ink/20" size={20} />}
-                </button>
+              {/* Reactions row — below bubble, aligned to same side */}
+              {!isDeleted && (
+                <MessageReactions
+                  reactions={msg.reactions}
+                  messageId={msg.id}
+                  roomId={roomId!}
+                  currentUserId={user.uid}
+                  isMe={isMe}
+                  isOpen={activeReactionMsgId === msg.id}
+                  onOpenChange={(open: boolean) => setActiveReactionMsgId(open ? msg.id : null)}
+                />
               )}
             </motion.div>
           );
@@ -594,7 +615,7 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Message Options Menu */}
+      {/* Message Options Menu (tap) */}
       {selectedMessageId && menuPosition && (() => {
         const msg = messages.find(m => m.id === selectedMessageId);
         if (!msg) return null;
@@ -606,7 +627,21 @@ export default function ChatRoom({ panelMode, onBack, roomIdOverride }: ChatRoom
             style={{ borderColor: 'var(--color-border)', ...menuPosition }}
             onClick={e => e.stopPropagation()}
           >
-            <button onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); setSelectedMessageId(null); setMenuPosition(null); }} className="px-4 py-3 text-left text-sm font-medium text-luxury-ink hover:bg-surface-soft transition-colors flex items-center gap-2">
+            {/* React option at top of context menu */}
+            {!isDeleted && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveReactionMsgId(msg.id);
+                  setSelectedMessageId(null);
+                  setMenuPosition(null);
+                }}
+                className="px-4 py-3 text-left text-sm font-medium text-luxury-ink hover:bg-surface-soft transition-colors flex items-center gap-2"
+              >
+                <span className="text-base">😊</span> React
+              </button>
+            )}
+            <button onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); setSelectedMessageId(null); setMenuPosition(null); }} className="px-4 py-3 text-left text-sm font-medium text-luxury-ink hover:bg-surface-soft transition-colors flex items-center gap-2 border-t border-luxury-ink/5">
               <CornerDownRight size={16} className="opacity-60" /> Reply
             </button>
             <button onClick={(e) => { e.stopPropagation(); handlePinMessage(msg.id, msg.text); setMenuPosition(null); }} className="px-4 py-3 text-left text-sm font-medium text-luxury-ink hover:bg-surface-soft transition-colors flex items-center gap-2 border-t border-luxury-ink/5">
