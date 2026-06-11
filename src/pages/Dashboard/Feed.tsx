@@ -1717,7 +1717,7 @@ export default function Feed() {
                       name="content"
                       required
                       placeholder="What's on your mind?"
-                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-[300px]"
+                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-75"
                     ></textarea>
 
                     {/* Poll Creator */}
