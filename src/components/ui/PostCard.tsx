@@ -93,6 +93,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
   const hasImage = postImageUrls.length > 0;
   const [showReport, setShowReport] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   const displayInfo = getPersonaDisplay(post, false);
@@ -109,6 +110,38 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
     }
   };
 
+  const prevImage = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!scrollRef.current) return;
+    const newIndex = (currentImageIndex - 1 + postImageUrls.length) % postImageUrls.length;
+    const width = scrollRef.current.clientWidth;
+    scrollRef.current.scrollTo({ left: newIndex * width, behavior: 'smooth' });
+    setCurrentImageIndex(newIndex);
+  };
+
+  const nextImage = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!scrollRef.current) return;
+    const newIndex = (currentImageIndex + 1) % postImageUrls.length;
+    const width = scrollRef.current.clientWidth;
+    scrollRef.current.scrollTo({ left: newIndex * width, behavior: 'smooth' });
+    setCurrentImageIndex(newIndex);
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!scrollRef.current) return;
+    const scrollLeft = e.currentTarget.scrollLeft;
+    const width = e.currentTarget.clientWidth;
+    if (width > 0) {
+      const newIndex = Math.round(scrollLeft / width);
+      if (newIndex !== currentImageIndex) {
+        setCurrentImageIndex(newIndex);
+      }
+    }
+  };
+
   return (
     <>
       <motion.article
@@ -116,8 +149,8 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
-        className={`post-card-clean cursor-pointer p-4 sm:p-6 md:p-8 flex flex-col w-full min-w-0 overflow-x-hidden ${post.type === 'confession' ? 'is-confession' : ''}`}
-        onClick={onClick}
+        className={`post-card-clean p-4 sm:p-6 md:p-8 flex flex-col w-full min-w-0 overflow-x-hidden ${post.type === 'confession' ? 'is-confession' : ''}`}
+        onDoubleClick={(e) => { e.preventDefault(); onUpvote?.(post); }}
       >
         {/* Metadata Row */}
         <div className="mb-3" onClick={handleProfileClick}>
@@ -173,24 +206,13 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
         {/* Image */}
         {hasImage && (
           <div className="relative mt-2 mb-6 w-full rounded-[20px] overflow-hidden group bg-black/5">
-            <motion.div 
-              className="flex w-full items-start"
-              drag={postImageUrls.length > 1 ? "x" : false}
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.2}
-              onDragEnd={(e, { offset }) => {
-                const swipe = offset.x;
-                if (swipe < -50 && currentImageIndex < postImageUrls.length - 1) {
-                  setCurrentImageIndex(prev => prev + 1);
-                } else if (swipe > 50 && currentImageIndex > 0) {
-                  setCurrentImageIndex(prev => prev - 1);
-                }
-              }}
-              animate={{ x: `-${currentImageIndex * 100}%` }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            <div 
+              ref={scrollRef}
+              onScroll={handleScroll}
+              className="flex w-full items-start overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
             >
               {postImageUrls.map((url, idx) => (
-                <div key={idx} className="w-full shrink-0">
+                <div key={idx} className="w-full shrink-0 snap-center">
                   <img
                     src={getOptimizedImageUrl(url)}
                     alt={post.title || "Post image"}
@@ -200,7 +222,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
                   />
                 </div>
               ))}
-            </motion.div>
+            </div>
 
             {postImageUrls.length > 1 && (
               <>
@@ -209,21 +231,21 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
                 </div>
                 
                 {/* Navigation arrows */}
-                {currentImageIndex > 0 && (
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCurrentImageIndex(prev => prev - 1); }}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                  >
-                    <ChevronLeft size={18} />
-                  </button>
-                )}
-                {currentImageIndex < postImageUrls.length - 1 && (
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCurrentImageIndex(prev => prev + 1); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                  >
-                    <ChevronRight size={18} />
-                  </button>
+                {postImageUrls.length > 1 && (
+                  <>
+                    <button
+                      onClick={prevImage}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <button
+                      onClick={nextImage}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </>
                 )}
 
                 {/* Bottom dots indicator */}
