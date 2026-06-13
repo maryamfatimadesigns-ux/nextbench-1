@@ -16,14 +16,11 @@ interface State {
  * friendly recovery UI instead of a black screen.
  */
 export default class ErrorBoundary extends React.Component<Props, State> {
-  private handleUnhandledRejection: (event: PromiseRejectionEvent) => void;
-
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false, error: null };
     this.handleReload = this.handleReload.bind(this);
     this.handleRetry = this.handleRetry.bind(this);
-    this.handleUnhandledRejection = () => {};
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -31,17 +28,14 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidMount() {
-    this.handleUnhandledRejection = this.handleUnhandledRejection.bind(this);
-    window.addEventListener('unhandledrejection', this.handleUnhandledRejection);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection);
   }
 
   componentWillUnmount() {
-    window.removeEventListener('unhandledrejection', this.handleUnhandledRejection);
+    window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
   }
 
-  handleUnhandledRejection(event: PromiseRejectionEvent) {
-    // Prevent the default browser error logging for handled rejections
-    event.preventDefault();
+  private onUnhandledRejection = (event: PromiseRejectionEvent) => {
     const error = event.reason instanceof Error
       ? event.reason
       : new Error(String(event.reason || 'Unhandled promise rejection'));
@@ -49,9 +43,12 @@ export default class ErrorBoundary extends React.Component<Props, State> {
     // Only show error UI for chunk/import failures — other async errors
     // are typically non-fatal and shouldn't crash the whole UI
     if (this.isChunkError(error)) {
+      // Prevent the default browser error logging only for errors we handle
+      event.preventDefault();
       this.setState({ hasError: true, error });
     }
-  }
+    // Non-chunk errors: let them propagate normally so they appear in console
+  };
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Caught:', error, info);
@@ -64,7 +61,10 @@ export default class ErrorBoundary extends React.Component<Props, State> {
       msg.includes('Failed to fetch dynamically imported module') ||
       msg.includes('Loading chunk') ||
       msg.includes('Loading CSS chunk') ||
-      msg.includes('ChunkLoadError')
+      msg.includes('ChunkLoadError') ||
+      msg.includes('Load failed') || // Safari
+      msg.includes('Importing a module script failed') || // Safari
+      msg.includes('error loading dynamically imported module') // Safari/older iOS
     );
   }
 
@@ -105,6 +105,25 @@ export default class ErrorBoundary extends React.Component<Props, State> {
               ? 'A new version of Nextbench has been deployed. Please refresh to get the latest experience.'
               : 'An unexpected error occurred. You can try again or refresh the page.'}
           </p>
+
+          {/* Show error details for debugging */}
+          {this.state.error && (
+            <details className="mb-6 text-left">
+              <summary className="text-xs text-luxury-ink/40 cursor-pointer hover:text-luxury-ink/60 uppercase tracking-widest font-bold">
+                Error Details
+              </summary>
+              <div className="mt-2 p-3 rounded-lg bg-red-500/5 border border-red-500/10 overflow-auto max-h-40">
+                <p className="text-xs text-red-500 font-mono break-all whitespace-pre-wrap">
+                  {this.state.error.message}
+                </p>
+                {this.state.error.stack && (
+                  <p className="text-[10px] text-red-400/60 font-mono mt-2 break-all whitespace-pre-wrap">
+                    {this.state.error.stack}
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
