@@ -132,6 +132,64 @@ export function useFollowCounts(userId: string | undefined) {
   return { followersCount, followingCount };
 }
 
+// ─── Hook: Mutual Followers ──────────────────────────────
+
+export function useMutualFollowers(targetUserId: string | undefined) {
+  const { user } = useAuth();
+  const [mutuals, setMutuals] = useState<{ users: any[], totalCount: number }>({ users: [], totalCount: 0 });
+
+  useEffect(() => {
+    if (!user || !targetUserId || user.uid === targetUserId) {
+      setMutuals({ users: [], totalCount: 0 });
+      return;
+    }
+
+    const fetchMutuals = async () => {
+      try {
+        // 1. Get IDs of users the current user is following
+        const myFollowingQ = query(collection(db, 'follows'), where('followerId', '==', user.uid));
+        const myFollowingSnap = await getDocs(myFollowingQ);
+        const myFollowingIds = new Set<string>();
+        myFollowingSnap.forEach(d => myFollowingIds.add(d.data().followingId));
+
+        if (myFollowingIds.size === 0) {
+          setMutuals({ users: [], totalCount: 0 });
+          return;
+        }
+
+        // 2. Get IDs of users following the target user
+        const targetFollowersQ = query(collection(db, 'follows'), where('followingId', '==', targetUserId));
+        const targetFollowersSnap = await getDocs(targetFollowersQ);
+        const mutualIds: string[] = [];
+        
+        targetFollowersSnap.forEach(d => {
+          if (myFollowingIds.has(d.data().followerId)) {
+            mutualIds.push(d.data().followerId);
+          }
+        });
+
+        if (mutualIds.length === 0) {
+          setMutuals({ users: [], totalCount: 0 });
+          return;
+        }
+
+        // 3. Fetch details for up to 3 mutual followers
+        const displayIds = mutualIds.slice(0, 3);
+        const userDocs = await Promise.all(displayIds.map(id => getDoc(doc(db, 'users', id))));
+        const mutualUsers = userDocs.map(d => ({ id: d.id, name: d.data()?.name || 'User', profilePicture: d.data()?.profilePicture }));
+
+        setMutuals({ users: mutualUsers, totalCount: mutualIds.length });
+      } catch (err) {
+        console.error('Error fetching mutual followers:', err);
+      }
+    };
+
+    fetchMutuals();
+  }, [user, targetUserId]);
+
+  return mutuals;
+}
+
 // ─── Hook: Following IDs Set (for feed algorithm) ────────
 
 export function useFollowingIds() {
