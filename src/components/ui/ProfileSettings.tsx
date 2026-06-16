@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Moon, Sun, ShieldAlert, Edit2, LogOut, Loader2, LifeBuoy, Bookmark, User, Settings, ExternalLink, Trash2, Lock, UserPlus } from 'lucide-react';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { auth, db, messaging } from '../../lib/firebase';
+import { auth, db, getMessagingInstance } from '../../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { getToken } from 'firebase/messaging';
 import { useAuth } from '../../lib/AuthContext';
@@ -84,7 +84,8 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
     }
 
     try {
-      if (!messaging) {
+      const messagingInstance = await getMessagingInstance();
+      if (!messagingInstance) {
         showToast('Push notifications not supported on this browser', 'error');
         return;
       }
@@ -103,7 +104,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
           return;
         }
 
-        const token = await getToken(messaging, { vapidKey });
+        const token = await getToken(messagingInstance, { vapidKey });
         
         if (token) {
           const currentTokens = userData?.fcmTokens || [];

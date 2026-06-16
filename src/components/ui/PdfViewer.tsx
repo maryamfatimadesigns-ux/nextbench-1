@@ -160,7 +160,7 @@ export default function PdfViewer({ isOpen, onClose, pdfUrl, totalPages, title }
 
   return createPortal(
     <div 
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-6"
+      className="fixed inset-0 z-200 flex items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-6"
       onClick={onClose}
     >
       <div 
@@ -326,15 +326,18 @@ export function PdfPreview({ pdfUrl, totalPages, title }: { pdfUrl: string; tota
           <img
             src={previewUrl}
             alt="PDF preview"
-            className="w-full h-auto max-h-[400px] object-contain bg-white"
+            className="w-full h-auto max-h-100 object-contain bg-white"
             draggable={false}
           />
           {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           
           {/* Open viewer overlay */}
           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <div className="bg-white/95 backdrop-blur-sm text-luxury-ink px-5 py-3 rounded-xl shadow-xl flex items-center gap-2.5 font-semibold text-sm">
+            <div 
+              className="backdrop-blur-sm px-5 py-3 rounded-xl shadow-xl flex items-center gap-2.5 font-semibold text-sm"
+              style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-luxury-ink)' }}
+            >
               <FileText size={18} className="text-brand-teal" />
               View PDF
             </div>
