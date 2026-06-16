@@ -822,7 +822,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                 {firstName} {lastName}
                 {profileUser.verified && (
                   <span title={profileUser.accountType === 'organization' ? 'Verified Organization' : 'Verified Student'} className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-teal text-white shrink-0" style={{ marginTop: '2px' }}>
-                    {profileUser.accountType === 'organization' ? <Building2 size={13} /> : <ShieldCheck size={13} />}
+                    {profileUser.accountType === 'organization' ? <Building2 size={13} title="Organization" /> : <ShieldCheck size={13} title="Verified" />}
                   </span>
                 )}
               </h1>
@@ -1260,7 +1260,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-luxury-ink text-sm group-hover:text-brand-teal transition-colors flex items-center gap-1.5">
                             {u.name}
-                            {u.verified && <ShieldCheck size={14} className="text-brand-teal" />}
+                            {u.verified && <ShieldCheck size={14} className="text-brand-teal" title="Verified" />}
                           </p>
                           {u.username && <p className="text-[11px] text-luxury-ink/40">@{u.username}</p>}
                           <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 truncate">{u.school}</p>

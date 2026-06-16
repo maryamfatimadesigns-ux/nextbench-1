@@ -3,7 +3,6 @@ import { getAuth } from 'firebase/auth';
 import {
   initializeFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
   memoryLocalCache,
 } from 'firebase/firestore';
 
@@ -32,7 +31,9 @@ const app = initializeApp(firebaseConfig);
 function createFirestore() {
   try {
     return initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      // Using persistentSingleTabManager (default) is much more stable than multiple tab manager
+      // and prevents the "Unexpected state (ID: b815)" corruption errors in production.
+      localCache: persistentLocalCache(),
     }, firestoreDbId);
   } catch (e) {
     console.warn('[Firebase] Persistent cache unavailable, falling back to memory cache:', e);
@@ -47,10 +48,18 @@ export const db = createFirestore();
 export const auth = getAuth(app);
 export const functions = getFunctions(app);
 
-// Initialize Messaging only if supported by the browser
+// Initialize Messaging only if supported by the browser.
+// We keep the `messaging` export for backward compat (non-critical reads)
+// and provide an async getter `getMessagingInstance()` that callers MUST
+// use when they need the messaging object to be ready (e.g. before getToken).
 export let messaging: any = null;
-isSupported().then((supported) => {
+const _messagingReady = isSupported().then((supported) => {
   if (supported) {
     messaging = getMessaging(app);
   }
 }).catch(console.error);
+
+export async function getMessagingInstance() {
+  await _messagingReady;
+  return messaging;
+}

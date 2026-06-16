@@ -16,8 +16,32 @@ messaging.onBackgroundMessage((payload) => {
   const notificationTitle = payload.notification?.title || 'Nextbench Notification';
   const notificationOptions = {
     body: payload.notification?.body || 'You have a new message.',
-    icon: '/logo.png'
+    icon: '/logo.png',
+    data: { link: payload.data?.link || '/' }
   };
 
   self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+// Handle notification click — navigate to the link from the notification data
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const link = event.notification.data?.link || '/';
+  const urlToOpen = new URL(link, self.location.origin).href;
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // If a matching window is already open, focus it and navigate
+      for (const client of windowClients) {
+        if (client.url === urlToOpen && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new window
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
 });

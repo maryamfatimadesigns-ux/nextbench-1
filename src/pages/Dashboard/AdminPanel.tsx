@@ -28,7 +28,7 @@ export default function AdminPanel() {
   const [editingSchoolId, setEditingSchoolId] = useState<string | null>(null);
   const [selectedSchoolName, setSelectedSchoolName] = useState<string>('');
   const [pendingOrgs, setPendingOrgs] = useState<any[]>([]);
-  const [stats, setStats] = useState({ totalUsers: 0, verifiedUsers: 0, totalProducts: 0, pendingProducts: 0 });
+  const [stats, setStats] = useState({ totalUsers: 0, verifiedUsers: 0, totalProducts: 0, totalPending: 0 });
   const { userData, loading } = useAuth();
   const { showToast } = useToast();
 
@@ -37,13 +37,29 @@ export default function AdminPanel() {
     if (!userData?.isAdmin) return;
     const fetchStats = async () => {
       try {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const verifiedSnap = await getDocs(query(collection(db, 'users'), where('verified', '==', true)));
-        const productsSnap = await getDocs(collection(db, 'products'));
-        const pendingSnap = await getDocs(query(collection(db, 'products'), where('status', '==', 'pending')));
+        const [usersSnap, verifiedSnap, productsSnap, pendingProductsSnap, pendingVerificationsSnap, pendingOrgsSnap, pendingSchoolSnap, pendingPostsSnap, pendingReportsSnap] = await Promise.all([
+          getDocs(collection(db, 'users')),
+          getDocs(query(collection(db, 'users'), where('verified', '==', true))),
+          getDocs(collection(db, 'products')),
+          getDocs(query(collection(db, 'products'), where('status', '==', 'pending'))),
+          getDocs(query(collection(db, 'users'), where('verificationStatus', 'in', ['pending', 'flagged_manual']))),
+          getDocs(query(collection(db, 'users'), where('accountType', '==', 'organization'), where('verificationStatus', '==', 'pending'))),
+          getDocs(query(collection(db, 'school_requests'), where('status', '==', 'pending'))),
+          getDocs(query(collection(db, 'posts'), where('status', '==', 'pending'))),
+          getDocs(query(collection(db, 'reports'), where('status', '==', 'pending'))),
+        ]);
+
+        const totalPending =
+          pendingProductsSnap.size +
+          pendingVerificationsSnap.size +
+          pendingOrgsSnap.size +
+          pendingSchoolSnap.size +
+          pendingPostsSnap.size +
+          pendingReportsSnap.size;
+
         setStats({
           totalUsers: usersSnap.size, verifiedUsers: verifiedSnap.size,
-          totalProducts: productsSnap.size, pendingProducts: pendingSnap.size
+          totalProducts: productsSnap.size, totalPending
         });
         
         const schoolsSnap = await getDocs(collection(db, 'schools'));
@@ -333,7 +349,7 @@ export default function AdminPanel() {
           { label: 'Total Users', value: stats.totalUsers, icon: Users, color: 'text-brand-teal' },
           { label: 'Verified', value: stats.verifiedUsers, icon: ShieldCheck, color: 'text-brand-mint' },
           { label: 'Total Listings', value: stats.totalProducts, icon: Package, color: 'text-brand-pink' },
-          { label: 'Pending Review', value: stats.pendingProducts, icon: AlertTriangle, color: 'text-amber-500' },
+          { label: 'Pending Review', value: stats.totalPending, icon: AlertTriangle, color: 'text-amber-500' },
         ].map((s, i) => (
           <div key={i} className="theme-card rounded-2xl p-5 border" style={{ borderColor: 'var(--color-border)' }}>
             <div className="flex items-center gap-2 mb-2">
@@ -440,7 +456,7 @@ export default function AdminPanel() {
               <div className="flex-1 text-center md:text-left">
                 <div className="flex items-center gap-2 mb-0.5 justify-center md:justify-start">
                   <Link to={`/profile/${u.id}`} className="font-bold text-luxury-ink text-sm hover:text-brand-teal transition-colors">{u.name}</Link>
-                  {u.verified && <ShieldCheck size={14} className="text-brand-teal" />}
+                  {u.verified && <ShieldCheck size={14} className="text-brand-teal" title="Verified" />}
                   {u.isAdmin && <Crown size={14} className="text-brand-pink" />}
                 </div>
                 <div className="text-xs text-luxury-ink/40 flex items-center gap-1.5 flex-wrap">
