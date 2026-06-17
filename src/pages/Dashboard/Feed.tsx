@@ -27,6 +27,7 @@ import { getPersonaDisplay } from '../../lib/confessions';
 import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, ReactionType } from '../../lib/reactions';
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 interface Post {
   id: string;
@@ -723,6 +724,17 @@ export default function Feed() {
   const [replyingTo, setReplyingTo] = useState<{id: string, name: string} | null>(null);
   const [replyUpvotedIds, setReplyUpvotedIds] = useState<Set<string>>(new Set());
   const [replyUpvoteMap, setReplyUpvoteMap] = useState<Record<string, string>>({});
+
+  // Confirm dialog state (replaces window.confirm everywhere in this component)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const askConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmDialog({ title, message, onConfirm });
+  };
 
   // Lock body scroll when a modal is open
   useScrollLock(isModalOpen || !!selectedPost || cropImageSrc !== null);
@@ -1640,60 +1652,65 @@ export default function Feed() {
     }
   };
 
-  const handleDeletePost = async (postId: string) => {
-    if (!window.confirm('Are you sure you want to delete this post? This will also delete all comments and likes.')) return;
-    try {
-      const batch = writeBatch(db);
-      
-      const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
-      const repliesSnap = await getDocs(repliesQ);
-      repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-      
-      const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
-      const upvotesSnap = await getDocs(upvotesQ);
-      upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
+  const handleDeletePost = (postId: string) => {
+    askConfirm(
+      'Delete this post?',
+      'This will also delete all comments and likes. This action cannot be undone.',
+      async () => {
+        setConfirmDialog(null);
+        try {
+          const batch = writeBatch(db);
 
-      const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
-      const downvotesSnap = await getDocs(downvotesQ);
-      downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
+          const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
+          const repliesSnap = await getDocs(repliesQ);
+          repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
-      const reactionsSnap = await getDocs(reactionsQ);
-      reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
+          const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
+          const upvotesSnap = await getDocs(upvotesQ);
+          upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      // We do not delete notifications here because it violates security rules 
-      // (some notifications might belong to other users), and standard behavior
-      // is to simply show "Post not found" when clicking an old notification.
+          const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
+          const downvotesSnap = await getDocs(downvotesQ);
+          downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      await batch.commit();
+          const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
+          const reactionsSnap = await getDocs(reactionsQ);
+          reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      // Delete the post separately AFTER the batch. If the post is deleted inside
-      // the batch, the security rules evaluating `get()` for the related documents 
-      // will fail because the post is considered deleted during evaluation.
-      await deleteDoc(doc(db, 'posts', postId));
-      
-      showToast('Post deleted successfully', 'success');
-      setSelectedPost(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'posts');
-    }
-  };
+          await batch.commit();
+          await deleteDoc(doc(db, 'posts', postId));
 
-  const handleDeleteReply = async (replyId: string) => {
-    if (!window.confirm('Are you sure you want to delete this reply?')) return;
-    try {
-      await deleteDoc(doc(db, 'post_replies', replyId));
-      if (selectedPost) {
-        await updateDoc(doc(db, 'posts', selectedPost.id), {
-          repliesCount: Math.max(0, (selectedPost.repliesCount || 0) - 1),
-          updatedAt: serverTimestamp()
-        });
+          showToast('Post deleted successfully', 'success');
+          setSelectedPost(null);
+        } catch (e) {
+          handleFirestoreError(e, OperationType.DELETE, 'posts');
+        }
       }
-      showToast('Reply deleted', 'success');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'post_replies');
-    }
+    );
   };
+
+  const handleDeleteReply = (replyId: string) => {
+    askConfirm(
+      'Delete this reply?',
+      'This action cannot be undone.',
+      async () => {
+        setConfirmDialog(null);
+        try {
+          await deleteDoc(doc(db, 'post_replies', replyId));
+          if (selectedPost) {
+            await updateDoc(doc(db, 'posts', selectedPost.id), {
+              repliesCount: Math.max(0, (selectedPost.repliesCount || 0) - 1),
+              updatedAt: serverTimestamp()
+            });
+          }
+          showToast('Reply deleted', 'success');
+        } catch (e) {
+          handleFirestoreError(e, OperationType.DELETE, 'post_replies');
+        }
+      }
+    );
+  };
+
   const handleEditReply = async (replyId: string, newContent: string) => {
     try {
       await updateDoc(doc(db, 'post_replies', replyId), {
@@ -1706,6 +1723,7 @@ export default function Feed() {
       handleFirestoreError(e, OperationType.UPDATE, 'post_replies');
     }
   };
+
   // ─── Filtering (block system) ────────────────────────────
 
   let filteredPosts = posts.filter(p => {
@@ -1953,9 +1971,10 @@ export default function Feed() {
                 setPendingFiles([]);
               };
               if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
-                if (window.confirm('Discard your post?')) {
+                askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                  setConfirmDialog(null);
                   closeModal();
-                }
+                });
               } else {
                 closeModal();
               }
@@ -1997,9 +2016,10 @@ export default function Feed() {
                     setPendingFiles([]);
                   };
                   if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
-                    if (window.confirm('Discard your post?')) {
+                    askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                      setConfirmDialog(null);
                       closeModal();
-                    }
+                    });
                   } else {
                     closeModal();
                   }
@@ -2296,9 +2316,10 @@ export default function Feed() {
                             setPendingFiles([]);
                           };
                           if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
-                            if (window.confirm('Discard your post?')) {
+                            askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                              setConfirmDialog(null);
                               closeModal();
-                            }
+                            });
                           } else {
                             closeModal();
                           }
@@ -2341,6 +2362,15 @@ export default function Feed() {
         postUrl={shareModalData.url}
         postTitle={shareModalData.title}
         sharedPost={shareModalData.sharedPost}
+      />
+
+      {/* ─── Confirm Dialog (custom, replaces window.confirm) ──── */}
+      <ConfirmDialog
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        onCancel={() => setConfirmDialog(null)}
       />
 
     </div>
