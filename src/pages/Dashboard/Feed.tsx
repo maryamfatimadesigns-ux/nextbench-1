@@ -1813,21 +1813,42 @@ export default function Feed() {
       <div className="sticky top-0 z-40 nav-glass border-b flex items-center px-4 sm:px-6 gap-1" style={{ borderColor: 'var(--color-border)' }}>
         <button
           onClick={() => { setContentType('all'); setVisibleCount(6); }}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'all' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'all' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           For you
+          {contentType === 'all' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
         <button
           onClick={() => { setContentType('posts'); setVisibleCount(6); }}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'posts' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'posts' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           Posts
+          {contentType === 'posts' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
         <button
           onClick={() => { setContentType('marketplace'); setVisibleCount(6); }}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'marketplace' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'marketplace' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           Marketplace
+          {contentType === 'marketplace' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
       </div>
 
