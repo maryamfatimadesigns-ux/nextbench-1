@@ -21,6 +21,7 @@ import ProductCard from '../../components/ui/ProductCard';
 import PostCard from '../../components/ui/PostCard';
 import PollDisplay from '../../components/ui/PollDisplay';
 import LinkifiedText from '../../components/ui/LinkifiedText';
+import MentionInput from '../../components/ui/MentionInput';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import { getPersonaDisplay } from '../../lib/confessions';
@@ -28,6 +29,8 @@ import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, Rea
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { notifyMentionedUsers } from '../../lib/mentions';
+import { repostPost, undoRepost, useRepostedPostIds } from '../../lib/reposts';
 
 interface Post {
   id: string;
@@ -305,6 +308,8 @@ function PostDetailModal({
   onEditReply,
   onUpvoteReply,
   onReply,
+  onRepost,
+  hasReposted,
   replyUpvotedIds,
   replyingTo,
   clearReplyingTo,
@@ -330,6 +335,8 @@ function PostDetailModal({
   onEditReply: (replyId: string, newContent: string) => void;
   onUpvoteReply: (replyId: string) => void;
   onReply: (replyId: string, authorName: string) => void;
+  onRepost?: (post: Post) => void;
+  hasReposted?: boolean;
   replyUpvotedIds: Set<string>;
   replyingTo: {id: string, name: string} | null;
   clearReplyingTo: () => void;
@@ -597,13 +604,12 @@ function PostDetailModal({
                 </div>
               )}
               <div className="flex gap-3 items-end">
-                <input
+                <MentionInput
                   id="reply-input"
-                  type="text"
                   value={replyContent}
-                  onChange={(e) => setReplyContent(e.target.value)}
+                  onChange={(val) => setReplyContent(val)}
                   placeholder="Write a reply..."
-                  className="flex-1 bg-surface-base border border-luxury-ink/5 rounded-xl py-3 px-4 focus:outline-none focus:border-brand-teal text-sm font-medium"
+                  className="w-full bg-surface-base border border-luxury-ink/5 rounded-xl py-3 px-4 focus:outline-none focus:border-brand-teal text-sm font-medium"
                 />
                 <label className="p-3 rounded-xl border border-luxury-ink/5 text-luxury-ink/40 hover:text-brand-teal hover:border-brand-teal/30 cursor-pointer transition-colors shrink-0">
                   <ImageIcon size={18} />
@@ -653,20 +659,30 @@ function PostDetailModal({
                     </svg>
                     {post.downvotesCount || 0}
                   </button>
-                </div>
-              <button
-                onClick={() => document.getElementById('reply-input')?.focus()}
-                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-3 hover:bg-surface-soft rounded-2xl text-sm font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
-              >
-                <MessageSquare size={26} />
-                {post.repliesCount || 0}
-              </button>
-              <button
-                onClick={() => onShare(post)}
-                className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 hover:bg-surface-soft rounded-xl text-xs font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
-              >
-                <Share2 size={24} />
-              </button>
+              </div>
+
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  onClick={() => document.getElementById('reply-input')?.focus()}
+                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-3 hover:bg-surface-soft rounded-2xl text-sm font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
+                >
+                  <MessageSquare size={26} />
+                  {post.repliesCount || 0}
+                </button>
+                <button
+                  onClick={() => onShare(post)}
+                  className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 hover:bg-surface-soft rounded-xl text-xs font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
+                >
+                  <Share2 size={24} />
+                </button>
+                <button
+                  onClick={() => onRepost && onRepost(post)}
+                  className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-[14px] font-semibold transition-all ${hasReposted ? 'bg-emerald-500/10 text-emerald-500' : 'hover:bg-surface-soft text-luxury-ink/40 hover:text-emerald-500'}`}
+                >
+                  <Repeat2 size={24} className={hasReposted ? 'stroke-[2.5]' : ''} />
+                  <span>{post.repostsCount || 0}</span>
+                </button>
+              </div>
             </div>
             {(isAdmin || post.authorId === user?.uid) && onDelete && (
             <button
@@ -716,6 +732,8 @@ export default function Feed() {
   const [downvotedPostIds, setDownvotedPostIds] = useState<Set<string>>(new Set());
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [downvoteMap, setDownvoteMap] = useState<Record<string, string>>({});
+  const repostedPostIds = useRepostedPostIds();
+  const wishlistedProductIds = Array.from(wishlisted);
 
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<any[]>([]);
@@ -1163,6 +1181,30 @@ export default function Feed() {
   };
 
   // ─── Handlers ─────────────────────────────────────────
+
+
+  const handleRepost = async (post: Post) => {
+    if (!user || !userData) {
+      window.location.href = '/login';
+      return;
+    }
+    if (repostedPostIds.has(post.id)) {
+      try {
+        await undoRepost(user.uid, post.id);
+        showToast('Repost removed', 'success');
+      } catch (err) {
+        showToast('Failed to remove repost', 'error');
+      }
+    } else {
+      try {
+        await repostPost(user.uid, userData.name || user.email?.split('@')[0] || 'Anonymous', userData.profilePicture, post);
+        showToast('Reposted successfully!', 'success');
+      } catch (err) {
+        showToast('Failed to repost', 'error');
+      }
+    }
+  };
+
 
   const handleCreatePost = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1613,6 +1655,15 @@ export default function Feed() {
         }
       }
 
+      // Notify mentioned users in the reply
+      if (replyContent) {
+        notifyMentionedUsers(replyContent, user.uid, userData?.name || 'Someone', {
+          type: 'post_reply',
+          link: `/post/${selectedPost.id}`,
+          postId: selectedPost.id,
+        }).catch(err => console.warn('Failed to notify mentioned users:', err));
+      }
+
       setReplyContent('');
       setReplyImageFile(null);
       setReplyingTo(null);
@@ -1909,11 +1960,13 @@ export default function Feed() {
                     hasUpvoted={upvotedPostIds.has(item.id)} 
                     hasDownvoted={downvotedPostIds.has(item.id)}
                     hasSaved={savedPostIds.has(item.id)}
+                    hasReposted={repostedPostIds.has(item.id)}
                     onClick={() => setSelectedPost(item as Post)}
                     onUpvote={handleUpvote}
                     onDownvote={handleDownvote}
                     onShare={handleShare}
                     onSave={handleSavePost}
+                    onRepost={handleRepost}
                   />
                 );
 
@@ -1981,6 +2034,8 @@ export default function Feed() {
             onEditReply={handleEditReply}
             onUpvoteReply={handleUpvoteReply}
             onReply={handleReplyTo}
+            onRepost={handleRepost}
+            hasReposted={upvotedPostIds.has(selectedPost.id) /* fallback check */} 
             replyUpvotedIds={replyUpvotedIds}
             replyingTo={replyingTo}
             clearReplyingTo={() => setReplyingTo(null)}
