@@ -68,7 +68,7 @@ export default function Navbar() {
                     navigate('/' + link.path);
                   }
                 }}
-                className={`text-[13px] font-semibold uppercase tracking-widest transition-colors text-brand-teal/70 hover:text-brand-pink`}
+                className="text-[13px] font-semibold uppercase tracking-widest transition-colors text-brand-teal/70 hover:text-brand-pink"
               >
                 {link.name}
               </a>
