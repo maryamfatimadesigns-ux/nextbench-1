@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User as FirebaseUser, onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -13,6 +13,7 @@ export interface UserData {
   verificationStatus: 'pending' | 'approved' | 'rejected';
   reputation: number;
   isAdmin: boolean;
+  role?: 'admin' | 'moderator' | 'user';
   profilePicture?: string | null;
   idCardUrl?: string | null;
   selfieUrl?: string | null;
@@ -21,6 +22,14 @@ export interface UserData {
   city?: string;
   createdAt: string;
   updatedAt: string;
+  // Name fields
+  firstName?: string | null;
+  lastName?: string | null;
+  // Anonymous posting
+  anonymousPersonaName?: string | null;
+  lastUsernameChange?: { toDate: () => Date } | null;
+  // Chat privacy settings
+  chatPrivacy?: { followersOnly?: boolean } | null;
   // Organization account fields
   accountType?: 'student' | 'organization';
   orgName?: string | null;
@@ -28,6 +37,8 @@ export interface UserData {
   orgDocumentUrl?: string | null;
   orgWebsite?: string | null;
   orgDescription?: string | null;
+  // FCM push notification tokens
+  fcmTokens?: string[];
 }
 
 interface AuthContextType {
@@ -77,8 +88,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribeAuth();
   }, []);
 
+  // Memoize the context value to avoid re-rendering every consumer
+  // on every AuthProvider render (e.g. when unrelated parent state changes).
+  const value = useMemo(() => ({ user, userData, loading }), [user, userData, loading]);
+
   return (
-    <AuthContext.Provider value={{ user, userData, loading }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

@@ -8,6 +8,9 @@ import ProtectedRoute from './components/ui/ProtectedRoute';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import { useAuth } from './lib/AuthContext';
 import { lazyWithRetry } from './lib/lazyWithRetry';
+import { onMessage } from 'firebase/messaging';
+import { messaging } from './lib/firebase';
+import { useToast } from './lib/ToastContext';
 
 const LandingPage   = lazyWithRetry(() => import('./pages/LandingPage'));
 const Login         = lazyWithRetry(() => import('./pages/Auth/Login'));
@@ -35,7 +38,9 @@ const TermsPage     = lazyWithRetry(() => import('./pages/Legal/TermsPage'));
 const PrivacyPage   = lazyWithRetry(() => import('./pages/Legal/PrivacyPage'));
 const CareersPage   = lazyWithRetry(() => import('./pages/Legal/CareersPage'));
 const UsernameProfile = lazyWithRetry(() => import('./pages/Dashboard/UsernameProfile'));
+const Invite        = lazyWithRetry(() => import('./pages/Dashboard/Invite'));
 const NotFound      = lazyWithRetry(() => import('./pages/NotFound'));
+const Marketplace = lazyWithRetry(() => import('./pages/Marketplace'));
 
 function PageLoader() {
   return (
@@ -90,6 +95,34 @@ function DashLayout() {
 }
 
 export default function App() {
+  const { showToast } = useToast();
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const refCode = params.get('ref');
+    if (refCode) {
+      localStorage.setItem('pendingReferral', refCode);
+    }
+
+    // Handle push notifications when the app is in the foreground
+    if (messaging) {
+      const unsubscribe = onMessage(messaging, (payload) => {
+        const title = payload.notification?.title || 'New Notification';
+        const body = payload.notification?.body || '';
+        showToast(`${title}: ${body}`, 'info');
+        
+        // Also show a system notification if permitted
+        if (Notification.permission === 'granted') {
+          new Notification(title, {
+            body,
+            icon: '/logo.png'
+          });
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [showToast]);
+
   return (
     <ErrorBoundary>
       <div className="bg-surface-base font-sans select-none">
@@ -109,6 +142,7 @@ export default function App() {
               <Route path="/login"        element={<Login />} />
               <Route path="/signup"       element={<Signup />} />
               <Route path="/org-signup"   element={<OrgSignup />} />
+              <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/verification" element={<VerificationGuard><Verification /></VerificationGuard>} />
               <Route path="/post/:postId" element={<PostView />} />
             </Route>
@@ -116,8 +150,8 @@ export default function App() {
             {/* Dashboard 3-column layout */}
             <Route element={<DashLayout />}>
               <Route path="/dashboard"  element={<Navigate to="/" replace />} />
-              <Route path="/community"  element={<ProtectedRoute requireAuth><Feed /></ProtectedRoute>} />
-              <Route path="/search"     element={<ProtectedRoute requireAuth><Search /></ProtectedRoute>} />
+              <Route path="/community"  element={<Feed />} />
+              <Route path="/search"     element={<Search />} />
               <Route path="/product/:id" element={<ProtectedRoute requireAuth><ProductDetail /></ProtectedRoute>} />
               <Route path="/sell"       element={<ProtectedRoute requireAuth requireVerified><SellItem /></ProtectedRoute>} />
               <Route path="/edit-item/:id" element={<ProtectedRoute requireAuth requireVerified><SellItem /></ProtectedRoute>} />
@@ -127,10 +161,12 @@ export default function App() {
               <Route path="/notifications" element={<ProtectedRoute requireAuth requireVerified><Notifications /></ProtectedRoute>} />
               <Route path="/messages"   element={<ProtectedRoute requireAuth requireVerified><MessagesLayout /></ProtectedRoute>} />
               <Route path="/messages/:roomId" element={<ProtectedRoute requireAuth requireVerified><MessagesLayout /></ProtectedRoute>} />
+              <Route path="/chat/:roomId" element={<ProtectedRoute requireAuth requireVerified><ChatRoomPage /></ProtectedRoute>} />
               <Route path="/admin"      element={<ProtectedRoute requireAuth requireAdmin><AdminPanel /></ProtectedRoute>} />
               <Route path="/club/join/:inviteCode" element={<ProtectedRoute requireAuth requireVerified><ClubJoin /></ProtectedRoute>} />
               <Route path="/club/:clubId"          element={<ProtectedRoute requireAuth requireVerified><ClubChat /></ProtectedRoute>} />
               <Route path="/club/:clubId/settings" element={<ProtectedRoute requireAuth requireVerified><ClubSettings /></ProtectedRoute>} />
+              <Route path="/invite"     element={<ProtectedRoute requireAuth><Invite /></ProtectedRoute>} />
               <Route path="/u/:username" element={<ProtectedRoute requireAuth><UsernameProfile /></ProtectedRoute>} />
             </Route>
 

@@ -1,23 +1,25 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Star, Package, Settings, MapPin, X, Smartphone, ExternalLink, Trash2, Camera, MessageSquare, Handshake, Heart, MoreHorizontal, Ban, Flag, Copy, Check, Edit2, Building2, Globe, Eye } from 'lucide-react';
+import { ShieldCheck, Star, Package, Settings, MapPin, X, Smartphone, ExternalLink, Trash2, Camera, MessageSquare, Handshake, Heart, MoreHorizontal, Ban, Flag, Copy, Check, Edit2, Building2, Globe, Eye, Gift, UserPlus, ArrowUpDown } from 'lucide-react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/AuthContext';
 import React, { useState, useEffect, useRef } from 'react';
-import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, deleteDoc, getDoc, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, deleteDoc, getDoc, getDocs, writeBatch, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useToast } from '../../lib/ToastContext';
 import { uploadProfilePicture, uploadCoverPhoto } from '../../lib/storage';
 import { isHeicFile, convertHeicToJpeg } from '../../lib/heic-converter';
 import { getOptimizedImageUrl } from '../../lib/utils';
-import { followUser, unfollowUser, useFollowStatus, useFollowCounts } from '../../lib/follows';
+import { followUser, unfollowUser, useFollowStatus, useFollowCounts, useMutualFollowers } from '../../lib/follows';
 import { getOrCreateDMRoom } from '../../lib/dm';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import { useBlockStatus, blockUser, unblockUser } from '../../lib/blocks';
+import { useUserPresence } from '../../lib/presence';
 import UsernameSetup from '../../components/ui/UsernameSetup';
 import ReportModal from '../../components/ui/ReportModal';
 import ProfileSettings from '../../components/ui/ProfileSettings';
 import SEO from '../../components/seo/SEO';
+import { PdfPreview } from '../../components/ui/PdfViewer';
 
 
 interface UserProduct {
@@ -27,6 +29,57 @@ interface UserProduct {
 interface ProfileProps {
   /** When rendered via UsernameProfile resolver */
   usernameResolvedUserId?: string;
+}
+
+function SortDropdown({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const current = options.find(o => o.value === value);
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold text-luxury-ink/60 hover:text-luxury-ink transition-colors whitespace-nowrap"
+        style={{ border: '1px solid var(--color-border)' }}
+      >
+        <ArrowUpDown size={13} />
+        {current?.label}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -5 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -5 }}
+            className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-xl overflow-hidden z-30 border"
+            style={{ background: 'var(--color-surface-card)', borderColor: 'var(--color-border)' }}
+          >
+            {options.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => { onChange(opt.value); setOpen(false); }}
+                className={`w-full text-left px-4 py-2.5 text-xs font-semibold transition-colors hover:bg-surface-soft ${value === opt.value ? 'text-brand-teal' : 'text-luxury-ink/70'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 export default function Profile({ usernameResolvedUserId }: ProfileProps) {
@@ -43,11 +96,14 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const [myPosts, setMyPosts] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'pending' | 'sold'>('active');
   const [viewMode, setViewMode] = useState<'listings' | 'posts'>('listings');
+  const [listingSort, setListingSort] = useState<'newest' | 'oldest' | 'price-asc' | 'price-desc'>('newest');
+  const [postSort, setPostSort] = useState<'newest' | 'oldest' | 'most-liked' | 'most-discussed'>('newest');
   const [isUploadingPic, setIsUploadingPic] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedPost, setSelectedPost] = useState<any | null>(null);
+  const [myUpvotedPostIds, setMyUpvotedPostIds] = useState<Set<string>>(new Set());
 
   // Username
   const [showUsernameSetup, setShowUsernameSetup] = useState(false);
@@ -57,6 +113,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const [followAnimating, setFollowAnimating] = useState(false);
   const [showFollowersModal, setShowFollowersModal] = useState(false);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
+  const [showMutualsModal, setShowMutualsModal] = useState(false);
   const [followListUsers, setFollowListUsers] = useState<any[]>([]);
   const [loadingFollowList, setLoadingFollowList] = useState(false);
   const [isDMing, setIsDMing] = useState(false);
@@ -74,7 +131,13 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const pfpMenuRef = useRef<HTMLDivElement>(null);
 
-  useScrollLock(isEditing || showFollowersModal || showFollowingModal || !!selectedPost || showUsernameSetup || showReportModal || showSettingsModal || showPfpLightbox || showPfpUploadModal);
+  // Invite / Referral
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [referralCount, setReferralCount] = useState<number>(0);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
+
+  useScrollLock(isEditing || showFollowersModal || showFollowingModal || showMutualsModal || !!selectedPost || showUsernameSetup || showReportModal || showSettingsModal || showPfpLightbox || showPfpUploadModal);
 
   // Determine the actual userId to display
   const effectiveUserId = usernameResolvedUserId || routeUserId;
@@ -84,6 +147,8 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const { isFollowing, isFollowedBy, isFriend } = useFollowStatus(targetUserId);
   const { followersCount, followingCount } = useFollowCounts(targetUserId);
   const { isBlocked, isBlockedBy } = useBlockStatus(targetUserId);
+  const mutuals = useMutualFollowers(targetUserId);
+  const presence = useUserPresence(!isOwnProfile ? targetUserId : undefined);
 
   // Close menus on outside click
   useEffect(() => {
@@ -137,12 +202,25 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
   // Fetch profile user data
   useEffect(() => {
-    const fetchUser = async () => {
-      if (isOwnProfile) {
-        setProfileUser(userData);
-        setEditName(userData?.name || '');
-        setEditAbout(userData?.about || '');
-      } else if (effectiveUserId) {
+    if (isOwnProfile) {
+      // For own profile, use a real-time listener on our own user doc
+      // instead of depending on the `userData` object (which is a new reference
+      // on every AuthContext snapshot and causes an infinite re-render loop).
+      if (!user) return;
+      const unsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setProfileUser(data);
+          setEditName(data?.name || '');
+          setEditAbout(data?.about || '');
+        }
+      }, (err) => {
+        console.warn('Profile: own profile listener error (ignored):', err);
+      });
+      return () => unsub();
+    } else if (effectiveUserId) {
+      // For other profiles, fetch once
+      const fetchOtherUser = async () => {
         try {
           const docSnap = await getDoc(doc(db, 'users', effectiveUserId));
           if (docSnap.exists()) {
@@ -153,17 +231,39 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
         } catch (err) {
           handleFirestoreError(err, OperationType.GET, `users/${effectiveUserId}`);
         }
+      };
+      fetchOtherUser();
+    }
+  }, [effectiveUserId, isOwnProfile, user?.uid]);
+
+  // Fetch referral code for own profile
+  useEffect(() => {
+    if (!isOwnProfile || !user) return;
+    const fetchReferral = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'users', user.uid));
+        if (docSnap.exists() && docSnap.data().referralCode) {
+          setReferralCode(docSnap.data().referralCode);
+        }
+        
+        const coll = collection(db, 'users', user.uid, 'referrals');
+        const countSnap = await getCountFromServer(coll);
+        setReferralCount(countSnap.data().count);
+      } catch {
+        // Non-critical — referral code is optional
       }
     };
-    fetchUser();
-  }, [effectiveUserId, isOwnProfile, userData]);
+    fetchReferral();
+  }, [isOwnProfile, user?.uid]);
 
   // Auto-redirect to username URL if available and not already on it
   useEffect(() => {
-    if (!usernameResolvedUserId && profileUser?.username) {
+    // Only redirect when viewing via /profile/:id (not via /u/:username)
+    // and the profile has a username set
+    if (!usernameResolvedUserId && profileUser?.username && !isOwnProfile && routeUserId) {
       navigate(`/u/${profileUser.username}`, { replace: true });
     }
-  }, [profileUser?.username, usernameResolvedUserId, navigate]);
+  }, [profileUser?.username, usernameResolvedUserId, isOwnProfile, routeUserId]);
 
   // Fetch user's listings
   useEffect(() => {
@@ -180,9 +280,11 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       const prods: UserProduct[] = [];
       snap.forEach(d => prods.push({ id: d.id, ...d.data() } as UserProduct));
       setMyListings(prods);
+    }, (err) => {
+      console.warn('Profile: listings listener error (ignored):', err);
     });
     return () => unsub();
-  }, [effectiveUserId, isOwnProfile, user]);
+  }, [targetUserId, isOwnProfile]);
 
   // Fetch user's posts
   useEffect(() => {
@@ -199,15 +301,88 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       });
       posts.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
       setMyPosts(posts);
+    }, (err) => {
+      console.warn('Profile: posts listener error (ignored):', err);
     });
     return () => unsub();
-  }, [effectiveUserId, isOwnProfile, user]);
+  }, [targetUserId, isOwnProfile]);
+
+  // Track which posts the viewer themselves has liked, so the Posts tab can show liked status
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'post_upvotes'), where('userId', '==', user.uid));
+    const unsub = onSnapshot(q, (snap) => {
+      const ids = new Set<string>();
+      snap.forEach(d => {
+        const postId = d.data()?.postId;
+        if (postId) ids.add(postId);
+      });
+      setMyUpvotedPostIds(ids);
+    }, (err) => {
+      console.warn('Profile: upvotes listener error (ignored):', err);
+    });
+    return () => unsub();
+  }, [user?.uid]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') setDeferredPrompt(null);
+  };
+
+  const generateReferralCode = async () => {
+    if (!user) return;
+    setIsGeneratingCode(true);
+    try {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let uniqueCode = '';
+      let isUnique = false;
+      while (!isUnique) {
+        let code = '';
+        for (let i = 0; i < 8; i++) {
+          code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const q = query(collection(db, 'users'), where('referralCode', '==', code));
+        const snap = await getDocs(q);
+        if (snap.empty) { uniqueCode = code; isUnique = true; }
+      }
+      await updateDoc(doc(db, 'users', user.uid), {
+        referralCode: uniqueCode,
+        updatedAt: serverTimestamp()
+      });
+      setReferralCode(uniqueCode);
+      showToast('Referral code generated!', 'success');
+    } catch {
+      showToast('Failed to generate referral code', 'error');
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    const link = `${window.location.origin}?ref=${referralCode}`;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(link);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedInvite(true);
+      showToast('Invite link copied!', 'success');
+      setTimeout(() => setCopiedInvite(false), 2000);
+    } catch {
+      showToast('Failed to copy invite link', 'error');
+    }
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -344,13 +519,15 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       const downvotesSnap = await getDocs(downvotesQ);
       downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      const notificationsQ = query(collection(db, 'notifications'), where('postId', '==', postId));
-      const notificationsSnap = await getDocs(notificationsQ);
-      notificationsSnap.forEach(docSnap => batch.delete(docSnap.ref));
-      
-      batch.delete(doc(db, 'posts', postId));
-      
+      // We do not delete notifications here because it violates security rules 
+      // (some notifications might belong to other users), and standard behavior
+      // is to simply show "Post not found" when clicking an old notification.
       await batch.commit();
+      
+      // Delete the post separately AFTER the batch. If the post is deleted inside
+      // the batch, the security rules evaluating `get()` for the related documents 
+      // will fail because the post is considered deleted during evaluation.
+      await deleteDoc(doc(db, 'posts', postId));
       
       showToast('Post deleted successfully', 'success');
     } catch (e) {
@@ -384,13 +561,13 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const handleDM = async () => {
     if (!user || !targetUserId || !userData) return;
     if (!userData.verified) {
-      showToast('Only verified students can send direct messages.', 'warning');
+      showToast('Only verified students can send direct messages.', 'warning'); 
       return;
     }
     setIsDMing(true);
     try {
       const roomId = await getOrCreateDMRoom(user.uid, targetUserId);
-      navigate(`/chat/${roomId}`, { state: { otherUser: profileUser } });
+      navigate(`/messages/${roomId}`, { state: { otherUser: { ...profileUser, id: targetUserId } } });
     } catch (err) {
       showToast('Failed to start conversation', 'error');
     } finally {
@@ -423,13 +600,32 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     }
   };
 
-  const handleCopyUsername = () => {
+  const handleCopyUsername = async () => {
     const un = profileUser?.username;
     if (!un) return;
-    navigator.clipboard.writeText(`nextbench.in/u/${un}`);
-    setCopiedUsername(true);
-    showToast('Profile link copied!', 'success');
-    setTimeout(() => setCopiedUsername(false), 2000);
+    const link = `nextbench.in/u/${un}`;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(link);
+      } else {
+        // Fallback for iOS in-app browsers (Instagram, etc.)
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedUsername(true);
+      showToast('Profile link copied!', 'success');
+      setTimeout(() => setCopiedUsername(false), 2000);
+    } catch {
+      showToast('Failed to copy link', 'error');
+    }
   };
 
   // ─── Follow List Modal ─────────────────────────────────
@@ -454,6 +650,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const openFollowers = async () => {
     setShowFollowersModal(true);
     setShowFollowingModal(false);
+    setShowMutualsModal(false);
     const { collection: coll, query: q, where: w, getDocs: gd } = await import('firebase/firestore');
     const snap = await gd(q(coll(db, 'follows'), w('followingId', '==', targetUserId)));
     const ids = snap.docs.map(d => d.data().followerId);
@@ -463,11 +660,62 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const openFollowing = async () => {
     setShowFollowingModal(true);
     setShowFollowersModal(false);
+    setShowMutualsModal(false);
     const { collection: coll, query: q, where: w, getDocs: gd } = await import('firebase/firestore');
     const snap = await gd(q(coll(db, 'follows'), w('followerId', '==', targetUserId)));
     const ids = snap.docs.map(d => d.data().followingId);
     loadFollowList(ids);
   };
+
+  const openMutuals = () => {
+    setShowMutualsModal(true);
+    setShowFollowersModal(false);
+    setShowFollowingModal(false);
+    if (mutuals.mutualIds) loadFollowList(mutuals.mutualIds);
+  };
+
+  // ─── Derived listing/post data (must run before any early return) ─────
+
+  const activeListings = myListings.filter(p => p.status === 'available');
+  const pendingListings = myListings.filter(p => p.status === 'pending');
+  const soldListings = myListings.filter(p => p.status === 'sold');
+  const displayedListings = activeTab === 'active' ? activeListings : activeTab === 'pending' ? pendingListings : soldListings;
+
+  const sortedListings = React.useMemo(() => {
+    const arr = [...displayedListings];
+    switch (listingSort) {
+      case 'oldest':
+        arr.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
+        break;
+      case 'price-asc':
+        arr.sort((a, b) => (a.price || 0) - (b.price || 0));
+        break;
+      case 'price-desc':
+        arr.sort((a, b) => (b.price || 0) - (a.price || 0));
+        break;
+      default:
+        arr.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+    }
+    return arr;
+  }, [displayedListings, listingSort]);
+
+  const sortedPosts = React.useMemo(() => {
+    const arr = myPosts.filter(post => post.privacy !== 'private' || isFriend || isOwnProfile);
+    switch (postSort) {
+      case 'oldest':
+        arr.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
+        break;
+      case 'most-liked':
+        arr.sort((a, b) => (b.upvotesCount || 0) - (a.upvotesCount || 0));
+        break;
+      case 'most-discussed':
+        arr.sort((a, b) => (b.repliesCount || 0) - (a.repliesCount || 0));
+        break;
+      default:
+        arr.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+    }
+    return arr;
+  }, [myPosts, isFriend, isOwnProfile, postSort]);
 
   // ─── Blocked States ─────────────────────────────────────
 
@@ -503,14 +751,10 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
   if (!user || !profileUser) return <div className="pt-32 text-center text-xs font-bold uppercase tracking-widest text-luxury-ink/30">Loading profile...</div>;
 
-  const userName = profileUser.name || 'Unknown User';
-  const [firstName, ...lastNameParts] = userName.split(' ');
-  const lastName = lastNameParts.join(' ');
-
-  const activeListings = myListings.filter(p => p.status === 'available');
-  const pendingListings = myListings.filter(p => p.status === 'pending');
-  const soldListings = myListings.filter(p => p.status === 'sold');
-  const displayedListings = activeTab === 'active' ? activeListings : activeTab === 'pending' ? pendingListings : soldListings;
+  const userName = (profileUser.name && typeof profileUser.name === 'string') ? profileUser.name : 'Unknown User';
+  const nameParts = userName.split(' ');
+  const firstName = nameParts[0] || '';
+  const lastName = nameParts.slice(1).join(' ');
 
   return (
     <div className="pb-20 max-w-7xl mx-auto relative">
@@ -573,7 +817,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       <div className="px-6 -mt-16 md:-mt-20 relative z-10">
 
         {/* Top row: avatar + action buttons */}
-        <div className="flex items-end justify-between mb-4">
+        <div className="flex items-start justify-between mb-4">
           {/* Avatar */}
           <div className="relative shrink-0 group ring-4 ring-surface-base rounded-full">
             <div
@@ -647,7 +891,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
           </div>
 
           {/* Action buttons — top right, vertically centered with avatar bottom */}
-          <div className="flex items-center gap-3 flex-wrap pb-1">
+          <div className="flex items-center justify-end gap-3 flex-wrap pb-1 mt-16 md:mt-20">
             {isOwnProfile ? (
               <>
                 <button
@@ -714,8 +958,8 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                 {firstName} {lastName}
                 {profileUser.verified && (
                   <span title={profileUser.accountType === 'organization' ? 'Verified Organization' : 'Verified Student'} className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-teal text-white shrink-0" style={{ marginTop: '2px' }}>
-                    {profileUser.accountType === 'organization' ? <Building2 size={13} /> : <ShieldCheck size={13} />}
-                  </span>
+                    {profileUser.accountType === 'organization' ? <Building2 size={13} /> : <ShieldCheck size={13} />
+                }</span>
                 )}
               </h1>
               {isFriend && (
@@ -736,6 +980,18 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
             <MapPin size={14} className="text-brand-teal/70" />
             {profileUser.accountType === 'organization' ? (profileUser.city || profileUser.school) : profileUser.school}
           </p>
+
+          {/* Last active — visible only for mutual follows (friends) */}
+          {!isOwnProfile && isFriend && presence.label && (
+            <p className={`flex items-center gap-1.5 text-xs font-semibold mt-1.5 ${
+              presence.status === 'online' ? 'text-emerald-500' : presence.status === 'recent' ? 'text-amber-500' : 'text-luxury-ink/35'
+            }`}>
+              <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+                presence.status === 'online' ? 'bg-emerald-400 animate-pulse' : presence.status === 'recent' ? 'bg-amber-400' : 'bg-luxury-ink/20'
+              }`} />
+              {presence.label}
+            </p>
+          )}
 
           {profileUser.accountType === 'organization' && profileUser.orgType && (
             <span className="inline-flex items-center gap-1.5 mt-2 px-3 py-1 bg-brand-pink/10 text-brand-pink rounded-full text-[10px] font-bold uppercase tracking-widest">
@@ -780,15 +1036,111 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
             <span className="text-sm text-luxury-ink/50 group-hover:text-brand-teal/70 transition-colors">Following</span>
           </button>
           <div className="flex items-center gap-1.5">
-            <span className="text-sm font-bold text-luxury-ink">{soldListings.length}</span>
-            <span className="text-sm text-luxury-ink/50">Deals</span>
-          </div>
-          <div className="flex items-center gap-1.5">
             <span className="text-sm font-bold text-luxury-ink">{profileUser.reputation?.toFixed(1) || '5.0'}</span>
             <span className="text-sm text-luxury-ink/50 flex items-center gap-0.5">Reputation <Star size={11} className="text-brand-teal" /></span>
           </div>
         </div>
+
+        {/* ─── Mutual Followers ───────────────────────────────── */}
+        {!isOwnProfile && mutuals.totalCount > 0 && (
+          <button onClick={openMutuals} className="flex items-center gap-3 mb-6 bg-surface-soft/50 hover:bg-surface-soft p-3 rounded-xl w-full max-w-sm text-left transition-colors cursor-pointer group">
+            <div className="flex -space-x-2 shrink-0">
+              {mutuals.users.map((mu) => (
+                <div key={mu.id} className="w-6 h-6 rounded-full bg-brand-teal/10 border-2 border-surface-card flex items-center justify-center overflow-hidden shrink-0">
+                  {mu.profilePicture ? (
+                    <img src={getOptimizedImageUrl(mu.profilePicture)} alt={mu.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[8px] font-bold text-brand-teal uppercase">{mu.name?.[0]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-luxury-ink/50 leading-tight">
+              Followed by <span className="font-bold text-luxury-ink">{mutuals.users[0].name}</span>
+              {mutuals.totalCount > 1 && (
+                <span>, <span className="font-bold text-luxury-ink">{mutuals.users[1]?.name || 'others'}</span></span>
+              )}
+              {mutuals.totalCount > 2 && (
+                <span> and <span className="font-bold text-luxury-ink">{mutuals.totalCount - 2} {mutuals.totalCount - 2 === 1 ? 'other' : 'others'}</span></span>
+              )}
+            </p>
+          </button>
+        )}
       </div>
+
+
+      {/* ─── Invite Friends Card (own profile only) ───────── */}
+      {isOwnProfile && (
+        <div className="px-6 mb-8">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative overflow-hidden rounded-2xl p-5 md:p-6"
+            style={{
+              background: 'linear-gradient(135deg, rgba(0,212,178,0.12) 0%, rgba(233,68,117,0.10) 50%, rgba(168,85,247,0.10) 100%)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            {/* Decorative elements */}
+            <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-brand-teal/8 blur-2xl" />
+            <div className="absolute -bottom-8 -left-8 w-28 h-28 rounded-full bg-brand-pink/8 blur-2xl" />
+            
+            <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <div className="flex items-center gap-4 flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-2xl bg-brand-teal/15 flex items-center justify-center shrink-0">
+                  <Gift className="text-brand-teal" size={24} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-luxury-ink mb-0.5">Invite Friends</h3>
+                  <p className="text-xs text-luxury-ink/50">Share Nextbench with your campus network</p>
+                  <p className={`text-xs font-semibold mt-1 ${referralCount > 0 ? 'text-brand-teal' : 'text-luxury-ink/40'}`}>
+                    {referralCount} {referralCount === 1 ? 'person' : 'people'} joined using your link
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {referralCode ? (
+                  <>
+                    <div className="flex-1 sm:flex-initial bg-surface-base/80 border rounded-xl px-4 py-2.5 flex items-center gap-3" style={{ borderColor: 'var(--color-border)' }}>
+                      <UserPlus size={14} className="text-brand-teal shrink-0" />
+                      <span className="text-xs font-bold text-luxury-ink tracking-wide truncate">{referralCode}</span>
+                    </div>
+                    <button
+                      onClick={copyInviteLink}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all shrink-0 ${
+                        copiedInvite
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-luxury-ink text-surface-base hover:bg-brand-teal'
+                      }`}
+                      style={!copiedInvite ? { color: 'var(--color-surface-base)' } : undefined}
+                    >
+                      {copiedInvite ? (
+                        <span className="flex items-center gap-1.5"><Check size={14} /> Copied</span>
+                      ) : (
+                        <span className="flex items-center gap-1.5"><Copy size={14} /> Copy</span>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={generateReferralCode}
+                    disabled={isGeneratingCode}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-luxury-ink text-surface-base rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-teal transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    style={{ color: 'var(--color-surface-base)' }}
+                  >
+                    {isGeneratingCode ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <><UserPlus size={14} /> Generate Invite Link</>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* ─── Content Area ─────────────────────────────────── */}
       <div className="px-6">
@@ -796,25 +1148,38 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
         <div className="flex w-full border-b mb-8" style={{ borderColor: 'var(--color-border)' }}>
           <button
             onClick={() => setViewMode('listings')}
-            className={`flex-1 flex justify-center pb-4 pt-2 transition-all hover:bg-luxury-ink/5 relative text-sm sm:text-base ${viewMode === 'listings' ? 'text-luxury-ink font-bold' : 'text-luxury-ink/50 font-medium'}`}
+            className={`flex-1 flex justify-center pb-4 pt-2 transition-colors hover:bg-luxury-ink/5 relative text-sm sm:text-base ${viewMode === 'listings' ? 'text-luxury-ink font-bold' : 'text-luxury-ink/50 font-medium'}`}
           >
             Listings
-            {viewMode === 'listings' && <div className="absolute bottom-0 h-1 w-16 bg-brand-pink rounded-t-full"></div>}
+            {viewMode === 'listings' && (
+              <motion.div
+                layoutId="profile-tab-underline"
+                className="absolute bottom-0 h-1 w-16 bg-brand-pink rounded-t-full"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
           </button>
           <button
             onClick={() => setViewMode('posts')}
-            className={`flex-1 flex justify-center pb-4 pt-2 transition-all hover:bg-luxury-ink/5 relative text-sm sm:text-base ${viewMode === 'posts' ? 'text-luxury-ink font-bold' : 'text-luxury-ink/50 font-medium'}`}
+            className={`flex-1 flex justify-center pb-4 pt-2 transition-colors hover:bg-luxury-ink/5 relative text-sm sm:text-base ${viewMode === 'posts' ? 'text-luxury-ink font-bold' : 'text-luxury-ink/50 font-medium'}`}
           >
             Posts
-            {viewMode === 'posts' && <div className="absolute bottom-0 h-1 w-12 bg-brand-teal rounded-t-full"></div>}
+            {viewMode === 'posts' && (
+              <motion.div
+                layoutId="profile-tab-underline"
+                className="absolute bottom-0 h-1 w-12 bg-brand-teal rounded-t-full"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
           </button>
         </div>
 
         {/* Listings Section */}
         {viewMode === 'listings' && (
           <>
-            {isOwnProfile && (
-              <div className="flex gap-2 overflow-x-auto no-scrollbar mb-6 pb-2">
+          {isOwnProfile && (
+            <div className="flex items-center justify-between gap-3 mb-6">
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                 {([['active', `Active (${activeListings.length})`], ['pending', `Pending (${pendingListings.length})`], ['sold', `Sold (${soldListings.length})`]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => setActiveTab(key as any)}
                     className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
@@ -824,10 +1189,21 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                   >{label}</button>
                 ))}
               </div>
-            )}
+              <SortDropdown
+                value={listingSort}
+                onChange={(v) => setListingSort(v as any)}
+                options={[
+                  { value: 'newest', label: 'Newest First' },
+                  { value: 'oldest', label: 'Oldest First' },
+                  { value: 'price-asc', label: 'Price: Low to High' },
+                  { value: 'price-desc', label: 'Price: High to Low' },
+                ]}
+              />
+            </div>
+          )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {displayedListings.map(product => (
+              {sortedListings.map(product => (
                 <div key={product.id} className="theme-card rounded-2xl overflow-hidden group transition-all hover:scale-[1.01] flex flex-col">
                   <div className="aspect-4/3 relative overflow-hidden bg-surface-soft shrink-0">
                     <img src={getOptimizedImageUrl(product.image)} alt={product.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
@@ -857,7 +1233,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                 </div>
               ))}
 
-              {displayedListings.length === 0 && (
+              {sortedListings.length === 0 && (
                 <div className="col-span-full rounded-2xl p-14 text-center border-2 border-dashed flex flex-col items-center" style={{ borderColor: 'var(--color-border)' }}>
                   <div className="relative mb-5">
                     <div className="w-20 h-20 rounded-2xl bg-luxury-ink/5 flex items-center justify-center">
@@ -890,7 +1266,20 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
         {/* Posts Section */}
         {viewMode === 'posts' && (
           <div className="space-y-6 max-w-2xl mx-auto w-full">
-            {myPosts.filter(post => post.privacy !== 'private' || isFriend || isOwnProfile).map(post => {
+            <div className="flex justify-end -mt-1">
+              <SortDropdown
+                value={postSort}
+                onChange={(v) => setPostSort(v as any)}
+                options={[
+                  { value: 'newest', label: 'Newest First' },
+                  { value: 'oldest', label: 'Oldest First' },
+                  { value: 'most-liked', label: 'Most Liked' },
+                  { value: 'most-discussed', label: 'Most Discussed' },
+                ]}
+              />
+            </div>
+
+            {sortedPosts.map(post => {
               const postImageUrls = post.imageUrls && post.imageUrls.length > 0
                 ? post.imageUrls
                 : (post.imageUrl ? [post.imageUrl] : []);
@@ -898,7 +1287,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
               return (
                 <div key={post.id} onClick={() => navigate(`/community?postId=${post.id}`)} className="theme-card rounded-2xl overflow-hidden transition-all hover:scale-[1.005] cursor-pointer group">
-                  {hasImage && (
+                  {hasImage && !post.pdfUrl && (
                     <div className="relative w-full aspect-video overflow-hidden bg-surface-soft">
                       <img
                         src={getOptimizedImageUrl(postImageUrls[0])}
@@ -906,6 +1295,11 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         referrerPolicy="no-referrer"
                       />
+                    </div>
+                  )}
+                  {post.pdfUrl && (
+                    <div className="px-5 pt-5 md:px-6 md:pt-6 pb-0">
+                      <PdfPreview pdfUrl={post.pdfUrl} totalPages={post.pdfPages || 1} title={post.title} />
                     </div>
                   )}
                   <div className="p-5 md:p-6">
@@ -922,8 +1316,8 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                     </div>
                     <p className="text-luxury-ink/60 leading-relaxed mb-4 text-sm line-clamp-2">{post.content}</p>
                     <div className="flex items-center gap-4 pt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
-                      <span className="flex items-center gap-1.5 text-xs font-semibold text-luxury-ink/40">
-                        <Heart size={14} /> {post.upvotesCount || 0}
+                      <span className={`flex items-center gap-1.5 text-xs font-semibold transition-colors ${myUpvotedPostIds.has(post.id) ? 'text-brand-pink' : 'text-luxury-ink/40'}`}>
+                        <Heart size={14} className={myUpvotedPostIds.has(post.id) ? 'fill-brand-pink' : ''} /> {post.upvotesCount || 0}
                       </span>
                       <span className="flex items-center gap-1.5 text-xs font-semibold text-luxury-ink/40">
                         <MessageSquare size={14} /> {post.repliesCount || 0}
@@ -942,7 +1336,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
               );
             })}
 
-            {myPosts.filter(post => post.privacy !== 'private' || isFriend || isOwnProfile).length === 0 && (
+            {sortedPosts.length === 0 && (
             <div className="rounded-2xl p-14 text-center border-2 border-dashed flex flex-col items-center" style={{ borderColor: 'var(--color-border)' }}>
               <div className="relative mb-5">
                 <div className="w-20 h-20 rounded-2xl bg-luxury-ink/5 flex items-center justify-center">
@@ -962,7 +1356,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       {/* ─── Edit Profile Modal ───────────────────────────── */}
       <AnimatePresence>
         {isEditing && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: 'var(--color-overlay)' }}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-100 flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: 'var(--color-overlay)' }}>
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="rounded-2xl w-full max-w-md p-8 relative shadow-2xl" style={{ background: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}>
               <button onClick={() => setIsEditing(false)} className="absolute top-4 right-4 p-2 text-luxury-ink/40 hover:text-luxury-ink"><X size={20} /></button>
               <h3 className="text-xl font-bold text-luxury-ink mb-2">Edit Profile</h3>
@@ -1009,16 +1403,16 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
         />
       )}
 
-      {/* Followers/Following Modal */}
+      {/* Followers/Following/Mutuals Modal */}
       <AnimatePresence>
-        {(showFollowersModal || showFollowingModal) && (
+        {(showFollowersModal || showFollowingModal || showMutualsModal) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-4 backdrop-blur-sm"
             style={{ background: 'var(--color-overlay)' }}
-            onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); }}
+            onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); setShowMutualsModal(false); }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -1030,7 +1424,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
             >
               <div className="p-6 border-b flex justify-between items-center" style={{ borderColor: 'var(--color-border)' }}>
                 <h3 className="text-xl font-bold text-luxury-ink">
-                  {showFollowersModal ? 'Followers' : 'Following'}
+                  {showMutualsModal ? 'Mutual Followers' : showFollowersModal ? 'Followers' : 'Following'}
                 </h3>
                 <button
                   onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); }}
@@ -1048,7 +1442,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                 ) : followListUsers.length === 0 ? (
                   <div className="py-12 text-center">
                     <p className="text-luxury-ink/40 font-serif italic text-lg">
-                      {showFollowersModal ? 'No followers yet.' : 'Not following anyone yet.'}
+                      {showMutualsModal ? 'No mutual followers.' : showFollowersModal ? 'No followers yet.' : 'Not following anyone yet.'}
                     </p>
                   </div>
                 ) : (
@@ -1057,7 +1451,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                       <Link
                         key={u.id}
                         to={u.username ? `/u/${u.username}` : `/profile/${u.id}`}
-                        onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); }}
+                        onClick={() => { setShowFollowersModal(false); setShowFollowingModal(false); setShowMutualsModal(false); }}
                         className="flex items-center gap-4 p-3 rounded-xl hover:bg-surface-soft transition-all group"
                       >
                         <div className="w-12 h-12 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden shrink-0" style={{ border: '1px solid var(--color-border)' }}>
@@ -1070,7 +1464,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-luxury-ink text-sm group-hover:text-brand-teal transition-colors flex items-center gap-1.5">
                             {u.name}
-                            {u.verified && <ShieldCheck size={14} className="text-brand-teal" />}
+                            {u.verified && <span title="Verified"><ShieldCheck size={14} className="text-brand-teal" /></span>}
                           </p>
                           {u.username && <p className="text-[11px] text-luxury-ink/40">@{u.username}</p>}
                           <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 truncate">{u.school}</p>
@@ -1123,7 +1517,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-4 backdrop-blur-sm"
             style={{ background: 'var(--color-overlay)' }}
             onClick={() => { if (!isUploadingPic) setShowPfpUploadModal(false); }}
           >

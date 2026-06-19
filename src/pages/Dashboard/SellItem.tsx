@@ -97,7 +97,7 @@ export default function SellItem() {
     };
     
     fetchListing();
-  }, [id, user, navigate, userData, showToast]);
+  }, [id, user?.uid, navigate, userData, showToast]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -313,6 +313,7 @@ export default function SellItem() {
           sellerName: userData.name,
           sellerSchool: userData.school,
           status: 'pending',
+          sellerProfilePicture: userData?.profilePicture || null,
           createdAt: serverTimestamp()
         });
         showToast('Listing submitted for admin review!', 'success');

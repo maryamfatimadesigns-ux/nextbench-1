@@ -56,10 +56,12 @@ export function useBlockedIds(): Set<string> {
       const ids = new Set<string>();
       snap.forEach((d) => ids.add(d.data().blockedId));
       setBlockedIds(ids);
+    }, (err) => {
+      console.warn('blocks: blocked IDs listener error (ignored):', err);
     });
 
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   return blockedIds;
 }
@@ -86,10 +88,12 @@ export function useBlockedByIds(): Set<string> {
       const ids = new Set<string>();
       snap.forEach((d) => ids.add(d.data().blockerId));
       setBlockedByIds(ids);
+    }, (err) => {
+      console.warn('blocks: blockedBy IDs listener error (ignored):', err);
     });
 
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   return blockedByIds;
 }
@@ -116,19 +120,25 @@ export function useBlockStatus(targetUserId?: string): {
     const docId1 = `${user.uid}_${targetUserId}`;
     const unsub1 = onSnapshot(doc(db, 'blocks', docId1), (snap) => {
       setIsBlocked(snap.exists());
+    }, (err) => {
+      console.warn('blocks: isBlocked listener error (ignored):', err);
+      setIsBlocked(false);
     });
 
     // Check if target blocked current user
     const docId2 = `${targetUserId}_${user.uid}`;
     const unsub2 = onSnapshot(doc(db, 'blocks', docId2), (snap) => {
       setIsBlockedBy(snap.exists());
+    }, (err) => {
+      console.warn('blocks: isBlockedBy listener error (ignored):', err);
+      setIsBlockedBy(false);
     });
 
     return () => {
       unsub1();
       unsub2();
     };
-  }, [user, targetUserId]);
+  }, [user?.uid, targetUserId]);
 
   return { isBlocked, isBlockedBy };
 }

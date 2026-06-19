@@ -1,30 +1,33 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3 } from 'lucide-react';
+import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3, ChevronLeft, ChevronRight, Paperclip, Film, Pencil } from 'lucide-react';
 import { collection, onSnapshot, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import SEO from '../../components/seo/SEO';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
-import { uploadPostImage } from '../../lib/storage';
+import { uploadPostImage, uploadReplyImage, uploadPostPdf, uploadPostVideo } from '../../lib/storage';
 import { getOptimizedImageUrl } from '../../lib/utils';
 import { useFollowingIds } from '../../lib/follows';
 import { isTextSafe } from '../../lib/moderation';
-import { checkAllImagesSafety, preloadModerationModel } from '../../lib/imageModeration';
+import { checkAllImagesSafety, checkImageSafety, preloadModerationModel } from '../../lib/imageModeration';
 import { createNotification } from '../../lib/notifications';
 import ShareModal from '../../components/ui/ShareModal';
 import { Link, useSearchParams } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import ImageCropper from '../../components/ui/ImageCropper';
 import ProductCard from '../../components/ui/ProductCard';
 import PostCard from '../../components/ui/PostCard';
 import PollDisplay from '../../components/ui/PollDisplay';
+import LinkifiedText from '../../components/ui/LinkifiedText';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import { getPersonaDisplay } from '../../lib/confessions';
 import { togglePostReaction, getUserReaction, REACTION_TYPES, REACTION_KEYS, ReactionType } from '../../lib/reactions';
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 interface Post {
   id: string;
@@ -63,10 +66,12 @@ interface Product {
   category: string;
   condition: string;
   image: string;
+  images?: string[];
   status: string;
   sellerId: string;
   sellerName: string;
   sellerSchool: string;
+  sellerProfilePicture?: string;
   city?: string;
   createdAt: any;
 }
@@ -79,16 +84,102 @@ export const POST_TYPES = [
   { id: 'others', label: 'Others' },
 ];
 
-function Comment({ reply, repliesMap, onReply, onDeleteReply, onUpvoteReply, replyUpvotedIds, isAdmin, user, level = 0 }: any) {
+// ─── Post Card Skeleton ────────────────────────────────────
+function PostCardSkeleton() {
+  return (
+    <div className="p-4 sm:p-6 md:p-8 flex flex-col w-full border-b animate-pulse" style={{ borderColor: 'var(--color-border)' }}>
+      {/* Avatar + meta row */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-8 h-8 rounded-full bg-luxury-ink/8 shrink-0" />
+        <div className="flex gap-2 flex-1">
+          <div className="h-3 w-24 rounded-full bg-luxury-ink/8" />
+          <div className="h-3 w-10 rounded-full bg-luxury-ink/6" />
+        </div>
+        <div className="h-5 w-14 rounded bg-luxury-ink/6" />
+      </div>
+      {/* Title */}
+      <div className="h-4 w-2/3 rounded-full bg-luxury-ink/10 mb-3" />
+      {/* Content lines */}
+      <div className="space-y-2 mb-5">
+        <div className="h-3 w-full rounded-full bg-luxury-ink/7" />
+        <div className="h-3 w-5/6 rounded-full bg-luxury-ink/7" />
+        <div className="h-3 w-4/6 rounded-full bg-luxury-ink/6" />
+      </div>
+      {/* Action bar */}
+      <div className="flex items-center gap-6 pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="h-3 w-10 rounded-full bg-luxury-ink/8" />
+        <div className="h-3 w-10 rounded-full bg-luxury-ink/8" />
+        <div className="h-3 w-10 rounded-full bg-luxury-ink/8" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Infinite Scroll Sentinel ──────────────────────────────
+function InfiniteScrollSentinel({ onVisible }: { onVisible: () => void }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) onVisible(); },
+      { rootMargin: '200px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onVisible]);
+
+  return (
+    <div ref={ref} className="flex flex-col w-full min-w-0">
+      {Array.from({ length: 3 }).map((_, i) => <PostCardSkeleton key={i} />)}
+    </div>
+  );
+}
+
+function Comment({ reply, repliesMap, onReply, onDeleteReply, onEditReply, onUpvoteReply, replyUpvotedIds, isAdmin, user, level = 0 }: any) {
   const children = repliesMap[reply.id] || [];
   const hasUpvoted = replyUpvotedIds.has(reply.id);
+  const canEdit = reply.authorId === user?.uid;
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(reply.content || '');
+
+  const handleSaveEdit = () => {
+    const trimmed = editText.trim();
+    if (!trimmed || trimmed === reply.content?.trim()) {
+      setIsEditing(false);
+      return;
+    }
+    onEditReply(reply.id, trimmed);
+    setIsEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditText(reply.content || '');
+    setIsEditing(false);
+  };
+
+  // Show stored pic immediately; fall back to live Firestore fetch if missing
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(reply.authorProfilePicture);
+  useEffect(() => {
+    if (reply.authorProfilePicture || !reply.authorId) return;
+    getDoc(doc(db, 'users', reply.authorId)).then(snap => {
+      if (snap.exists()) {
+        const pic = snap.data()?.profilePicture;
+        if (pic) setAvatarUrl(pic);
+      }
+    }).catch(() => {});
+  }, [reply.authorId, reply.authorProfilePicture]);
+
   return (
     <div className={`mt-4 ${level > 0 ? 'ml-4 md:ml-6 border-l-2 border-brand-teal/20 pl-4 md:pl-6' : ''}`}>
       <div className="bg-surface-soft/30 p-4 rounded-2xl border border-luxury-ink/5">
         <div className="flex items-center gap-3 mb-2">
           <Link to={`/profile/${reply.authorId}`} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <div className="w-6 h-6 rounded-full bg-brand-teal/10 flex items-center justify-center text-brand-teal font-bold text-[10px] shrink-0">
-              {reply.authorName[0]?.toUpperCase()}
+            <div className="w-6 h-6 rounded-full bg-brand-teal/10 flex items-center justify-center text-brand-teal font-bold text-[10px] shrink-0 overflow-hidden">
+              {avatarUrl ? (
+                <img src={getOptimizedImageUrl(avatarUrl)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : reply.authorName[0]?.toUpperCase()}
             </div>
             <div>
               <p className="text-[11px] font-bold text-luxury-ink">{reply.authorName}</p>
@@ -100,27 +191,81 @@ function Comment({ reply, repliesMap, onReply, onDeleteReply, onUpvoteReply, rep
               onClick={() => onUpvoteReply(reply.id)}
               className={`flex items-center gap-1 p-1.5 rounded-full text-[10px] font-bold transition-all ${hasUpvoted ? 'text-brand-pink bg-brand-pink/10' : 'text-luxury-ink/40 hover:bg-surface-soft hover:text-brand-pink'}`}
             >
-              <Heart size={14} className={hasUpvoted ? 'fill-brand-pink' : ''} />
+              <Heart size={18} className={hasUpvoted ? 'fill-brand-pink' : ''} />
               {reply.upvotesCount || 0}
             </button>
             <button
               onClick={() => onReply(reply.id, reply.authorName)}
               className="flex items-center gap-1 p-1.5 hover:bg-surface-soft rounded-full text-[10px] font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
             >
-              <MessageSquare size={14} />
+              <MessageSquare size={18} />
               Reply
             </button>
+            {canEdit && !isEditing && onEditReply && (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="flex items-center gap-1 p-1.5 hover:bg-surface-soft rounded-full text-[10px] font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
+              >
+                <Pencil size={16} />
+                Edit
+              </button>
+            )}
             {(isAdmin || reply.authorId === user?.uid) && onDeleteReply && (
               <button
                 onClick={() => onDeleteReply(reply.id)}
                 className="p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded-full text-luxury-ink/20 transition-all"
               >
-                <Trash2 size={14} />
+                <Trash2 size={16} />
               </button>
             )}
           </div>
         </div>
-        <p className="text-sm text-luxury-ink/80 leading-relaxed">{reply.content}</p>
+
+        {isEditing ? (
+          <div className="mt-1">
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              autoFocus
+              rows={2}
+              className="w-full bg-surface-base border border-luxury-ink/10 rounded-xl p-2.5 text-sm text-luxury-ink/80 focus:outline-none focus:border-brand-teal resize-none"
+            />
+            <div className="flex gap-3 mt-2">
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={!editText.trim()}
+                className="text-[11px] font-bold text-brand-teal hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                className="text-[11px] font-bold text-luxury-ink/40 hover:text-luxury-ink/70 hover:underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {reply.content?.trim() && (
+              <p className="text-sm text-luxury-ink/80 leading-relaxed">
+                {reply.content}
+                {reply.edited && <span className="text-[10px] text-luxury-ink/30 font-normal ml-1.5">(edited)</span>}
+              </p>
+            )}
+            {reply.imageUrl && (
+              <img
+                src={getOptimizedImageUrl(reply.imageUrl)}
+                alt=""
+                className="mt-3 max-h-60 rounded-xl object-cover"
+                referrerPolicy="no-referrer"
+              />
+            )}
+          </>
+        )}
       </div>
       {children.length > 0 && (
         <div className="mt-2">
@@ -131,6 +276,7 @@ function Comment({ reply, repliesMap, onReply, onDeleteReply, onUpvoteReply, rep
               repliesMap={repliesMap}
               onReply={onReply}
               onDeleteReply={onDeleteReply}
+              onEditReply={onEditReply}
               onUpvoteReply={onUpvoteReply}
               replyUpvotedIds={replyUpvotedIds}
               isAdmin={isAdmin}
@@ -156,6 +302,7 @@ function PostDetailModal({
   onShare, 
   onDelete, 
   onDeleteReply,
+  onEditReply,
   onUpvoteReply,
   onReply,
   replyUpvotedIds,
@@ -166,7 +313,10 @@ function PostDetailModal({
   replyContent, 
   setReplyContent, 
   onSubmitReply, 
-  isSubmitting 
+  isSubmitting,
+  replyImageFile,
+  setReplyImageFile,
+  isUploadingReplyImage
 }: {
   post: Post;
   onClose: () => void;
@@ -177,6 +327,7 @@ function PostDetailModal({
   onShare: (post: Post) => void;
   onDelete?: (postId: string) => void;
   onDeleteReply?: (replyId: string) => void;
+  onEditReply: (replyId: string, newContent: string) => void;
   onUpvoteReply: (replyId: string) => void;
   onReply: (replyId: string, authorName: string) => void;
   replyUpvotedIds: Set<string>;
@@ -188,6 +339,9 @@ function PostDetailModal({
   setReplyContent: (v: string) => void;
   onSubmitReply: (e: React.FormEvent) => void;
   isSubmitting: boolean;
+  replyImageFile: File | null;
+  setReplyImageFile: (f: File | null) => void;
+  isUploadingReplyImage: boolean;
 }) {
   const postImageUrls = post.imageUrls && post.imageUrls.length > 0
     ? post.imageUrls
@@ -209,11 +363,24 @@ function PostDetailModal({
     return map;
   }, [replies]);
 
+  const [commentSort, setCommentSort] = useState<'recent' | 'top' | 'discussed'>('recent');
+
+  const sortedRootReplies = useMemo(() => {
+    const roots = repliesMap['root'] || [];
+    if (commentSort === 'top') {
+      return [...roots].sort((a, b) => (b.upvotesCount || 0) - (a.upvotesCount || 0));
+    }
+    if (commentSort === 'discussed') {
+      return [...roots].sort((a, b) => (repliesMap[b.id]?.length || 0) - (repliesMap[a.id]?.length || 0));
+    }
+    return roots;
+  }, [repliesMap, commentSort]);
+
   useEffect(() => {
     if (user && post.type === 'confession') {
       getUserReaction(post.id, user.uid).then(r => setUserReaction(r));
     }
-  }, [post.id, user, post.type]);
+  }, [post.id, user?.uid, post.type]);
 
   const handleReactionClick = async (reaction: ReactionType) => {
     if (!user) return;
@@ -229,7 +396,7 @@ function PostDetailModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
+      className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 backdrop-blur-md"
       style={{ background: 'var(--color-overlay-heavy)' }}
       onClick={onClose}
     >
@@ -245,7 +412,7 @@ function PostDetailModal({
         {/* Scrollable Container */}
         <div className="flex-1 overflow-y-auto flex flex-col relative p-4 pt-14 sm:p-6 sm:pt-6 md:p-8">
           <button onClick={onClose} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 bg-surface-base text-luxury-ink/40 rounded-full hover:bg-surface-soft hover:text-luxury-ink transition-all z-10">
-            <X size={18} />
+            <X size={20} />
           </button>
 
           {/* Author */}
@@ -296,24 +463,50 @@ function PostDetailModal({
 
           {/* Image Section Moved Here */}
           {postImageUrls.length > 0 && (
-            <div className="relative bg-luxury-ink/5 rounded-2xl overflow-hidden mb-6 border border-luxury-ink/5 shrink-0">
+            <div className="relative bg-luxury-ink/5 rounded-2xl overflow-hidden mb-6 border border-luxury-ink/5 shrink-0 group">
               <img
                 src={getOptimizedImageUrl(postImageUrls[currentImageIndex])}
                 alt={post.title}
                 className="post-detail-image rounded-2xl"
                 referrerPolicy="no-referrer"
               />
-              {/* Image indicators */}
+
               {postImageUrls.length > 1 && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 bg-luxury-ink/40 backdrop-blur-md px-3 py-1.5 rounded-full">
-                  {postImageUrls.map((_, i) => (
+                <>
+                  {currentImageIndex > 0 && (
                     <button
-                      key={i}
-                      onClick={() => setCurrentImageIndex(i)}
-                      className={`w-2 h-2 rounded-full transition-all ${i === currentImageIndex ? 'bg-white w-4' : 'bg-white/50 hover:bg-white/80'}`}
-                    />
-                  ))}
-                </div>
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCurrentImageIndex(i => i - 1);
+                      }}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm transition-all"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                  )}
+
+                  {currentImageIndex < postImageUrls.length - 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCurrentImageIndex(i => i + 1);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm transition-all"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  )}
+
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 bg-luxury-ink/40 backdrop-blur-md px-3 py-1.5 rounded-full">
+                    {postImageUrls.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setCurrentImageIndex(i)}
+                        className={`w-2 h-2 rounded-full transition-all ${i === currentImageIndex ? 'bg-white w-4' : 'bg-white/50 hover:bg-white/80'}`}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -325,7 +518,27 @@ function PostDetailModal({
 
           {/* Replies Section */}
           <div className="mt-6">
-            <h3 className="text-lg font-bold text-luxury-ink mb-6">Discussions</h3>
+            <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+              <h3 className="text-lg font-bold text-luxury-ink">Discussions</h3>
+              {replies.length > 1 && (
+                <div className="flex items-center gap-1 p-0.5 bg-surface-soft rounded-xl text-[11px] font-bold">
+                  {(['recent', 'top', 'discussed'] as const).map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setCommentSort(s)}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        commentSort === s
+                          ? 'bg-surface-card text-luxury-ink shadow-sm'
+                          : 'text-luxury-ink/40 hover:text-luxury-ink'
+                      }`}
+                    >
+                      {s === 'recent' ? 'Recent' : s === 'top' ? 'Top' : 'Active'}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {replies.length === 0 ? (
               <div className="text-center py-6">
                 <MessageSquare className="mx-auto text-luxury-ink/10 mb-2" size={24} />
@@ -333,18 +546,19 @@ function PostDetailModal({
               </div>
             ) : (
               <div className="space-y-4 mb-6">
-                {repliesMap['root']?.map(reply => (
-                  <Comment
-                    key={reply.id}
-                    reply={reply}
-                    repliesMap={repliesMap}
-                    onReply={onReply}
-                    onDeleteReply={onDeleteReply}
-                    onUpvoteReply={onUpvoteReply}
-                    replyUpvotedIds={replyUpvotedIds}
-                    isAdmin={isAdmin}
-                    user={user}
-                  />
+                {sortedRootReplies.map(reply => (
+                <Comment
+                  key={reply.id}
+                  reply={reply}
+                  repliesMap={repliesMap}
+                  onReply={onReply}
+                  onDeleteReply={onDeleteReply}
+                  onEditReply={onEditReply}
+                  onUpvoteReply={onUpvoteReply}
+                  replyUpvotedIds={replyUpvotedIds}
+                  isAdmin={isAdmin}
+                  user={user}
+                />
                 ))}
               </div>
             )}
@@ -356,22 +570,62 @@ function PostDetailModal({
                 <button type="button" onClick={clearReplyingTo} className="hover:text-luxury-ink transition-colors"><X size={14} /></button>
               </div>
             )}
-            <form onSubmit={onSubmitReply} className="flex gap-3 mt-4">
-              <input
-                id="reply-input"
-                type="text"
-                value={replyContent}
-                onChange={(e) => setReplyContent(e.target.value)}
-                placeholder="Write a reply..."
-                className="flex-1 bg-surface-base border border-luxury-ink/5 rounded-xl py-3 px-4 focus:outline-none focus:border-brand-teal text-sm font-medium"
-              />
-              <button
-                type="submit"
-                disabled={!replyContent.trim() || isSubmitting}
-                className="bg-brand-teal text-white px-5 py-3 rounded-xl text-[11px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-brand-teal/20 hover:bg-brand-pink transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-              >
-                Send
-              </button>
+            <form 
+              onSubmit={onSubmitReply} 
+              className="mt-4"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files?.[0];
+                if (file && file.type.startsWith('image/')) {
+                  setReplyImageFile(file);
+                }
+              }}
+            >
+              {replyImageFile && (
+                <div className="relative inline-block mb-3">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border border-luxury-ink/10">
+                    <img src={URL.createObjectURL(replyImageFile)} alt="Preview" className="w-full h-full object-cover" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyImageFile(null)}
+                    className="absolute -top-1.5 -right-1.5 bg-luxury-ink text-white p-1 rounded-full"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-3 items-end">
+                <input
+                  id="reply-input"
+                  type="text"
+                  value={replyContent}
+                  onChange={(e) => setReplyContent(e.target.value)}
+                  placeholder="Write a reply..."
+                  className="flex-1 bg-surface-base border border-luxury-ink/5 rounded-xl py-3 px-4 focus:outline-none focus:border-brand-teal text-sm font-medium"
+                />
+                <label className="p-3 rounded-xl border border-luxury-ink/5 text-luxury-ink/40 hover:text-brand-teal hover:border-brand-teal/30 cursor-pointer transition-colors shrink-0">
+                  <ImageIcon size={18} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setReplyImageFile(e.target.files[0]);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={(!replyContent.trim() && !replyImageFile) || isSubmitting}
+                  className="bg-brand-teal text-white px-5 py-3 rounded-xl text-[11px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-brand-teal/20 hover:bg-brand-pink transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {isUploadingReplyImage ? '...' : 'Send'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -386,7 +640,7 @@ function PostDetailModal({
                     onClick={() => onUpvote(post)}
                     className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-sm font-bold transition-all ${hasUpvoted ? 'bg-brand-pink/10 text-brand-pink' : 'hover:bg-white text-luxury-ink/40 hover:text-brand-pink'}`}
                   >
-                    <Heart size={20} className={hasUpvoted ? 'fill-brand-pink' : ''} />
+                    <Heart size={26} className={hasUpvoted ? 'fill-brand-pink' : ''} />
                     {post.upvotesCount || 0}
                   </button>
                   <div className="w-1px h-6 bg-luxury-ink/10"></div>
@@ -394,7 +648,7 @@ function PostDetailModal({
                     onClick={() => onDownvote(post)}
                     className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-sm font-bold transition-all ${hasDownvoted ? 'bg-indigo-500/10 text-indigo-500' : 'hover:bg-white text-luxury-ink/40 hover:text-indigo-500'}`}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill={hasDownvoted ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill={hasDownvoted ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path>
                     </svg>
                     {post.downvotesCount || 0}
@@ -404,14 +658,14 @@ function PostDetailModal({
                 onClick={() => document.getElementById('reply-input')?.focus()}
                 className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-3 hover:bg-surface-soft rounded-2xl text-sm font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
               >
-                <MessageSquare size={20} className="sm:w-6 sm:h-6" />
+                <MessageSquare size={26} />
                 {post.repliesCount || 0}
               </button>
               <button
                 onClick={() => onShare(post)}
                 className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 hover:bg-surface-soft rounded-xl text-xs font-bold text-luxury-ink/40 hover:text-brand-teal transition-all"
               >
-                <Share2 size={18} />
+                <Share2 size={24} />
               </button>
             </div>
             {(isAdmin || post.authorId === user?.uid) && onDelete && (
@@ -419,7 +673,7 @@ function PostDetailModal({
               onClick={() => onDelete(post.id)}
               className="flex items-center gap-1.5 px-4 py-2.5 hover:bg-red-500/10 hover:text-red-500 rounded-xl text-xs font-bold text-luxury-ink/20 transition-all"
             >
-              <Trash2 size={16} />
+              <Trash2 size={18} />
             </button>
           )}
           </div>
@@ -438,7 +692,10 @@ export default function Feed() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [submittingStatus, setSubmittingStatus] = useState('Posting...');
   const [contentType, setContentType] = useState<'all' | 'posts' | 'marketplace'>('all');
   const [shareModalData, setShareModalData] = useState<{isOpen: boolean, url: string, title: string, sharedPost?: any}>({isOpen: false, url: '', title: ''});
@@ -463,9 +720,22 @@ export default function Feed() {
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<any[]>([]);
   const [replyContent, setReplyContent] = useState('');
+  const [replyImageFile, setReplyImageFile] = useState<File | null>(null);
+  const [isUploadingReplyImage, setIsUploadingReplyImage] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{id: string, name: string} | null>(null);
   const [replyUpvotedIds, setReplyUpvotedIds] = useState<Set<string>>(new Set());
   const [replyUpvoteMap, setReplyUpvoteMap] = useState<Record<string, string>>({});
+
+  // Confirm dialog state (replaces window.confirm everywhere in this component)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const askConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmDialog({ title, message, onConfirm });
+  };
 
   // Lock body scroll when a modal is open
   useScrollLock(isModalOpen || !!selectedPost || cropImageSrc !== null);
@@ -474,6 +744,7 @@ export default function Feed() {
   const [wishlistMap, setWishlistMap] = useState<Record<string, string>>({});
 
   const [rawPosts, setRawPosts] = useState<Post[]>([]);
+  const [visibleCount, setVisibleCount] = useState(6); // Show 6 items initially, load more on scroll
 
   const [searchParams, setSearchParams] = useSearchParams();
   const postIdFromUrl = searchParams.get('postId');
@@ -612,20 +883,33 @@ export default function Feed() {
       collection(db, 'products'),
       where('status', 'in', ['available', 'sold'])
     );
+    const sellerCache: Record<string, any> = {};
+
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       try {
         const fetchedProducts: Product[] = [];
-        
-        // Removed N+1 getDoc queries for sellers to improve speed
-        // Relying purely on denormalized data.
+
+        const uncachedIds = new Set<string>();
+        snapshot.forEach(docSnap => {
+          const sellerId = docSnap.data().sellerId;
+          if (sellerId && !sellerCache[sellerId]) uncachedIds.add(sellerId);
+        });
+        if (uncachedIds.size > 0) {
+          await Promise.all(Array.from(uncachedIds).map(async (uid) => {
+            const uDoc = await getDoc(doc(db, 'users', uid));
+            sellerCache[uid] = uDoc.exists() ? uDoc.data() : {};
+          }));
+        }
 
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
+          const sellerData = sellerCache[data.sellerId] || {};
           fetchedProducts.push({
             id: docSnap.id,
             ...data,
-            sellerName: data.sellerName || 'Unknown User',
-            sellerSchool: data.sellerSchool || 'Unknown School',
+            sellerName: sellerData.name || data.sellerName || 'Unknown User',
+            sellerSchool: sellerData.school || data.sellerSchool || 'Unknown School',
+            sellerProfilePicture: sellerData.profilePicture || data.sellerProfilePicture || null,
           } as Product);
         });
 
@@ -661,7 +945,7 @@ export default function Feed() {
       setUpvoteMap(map);
     });
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -677,7 +961,7 @@ export default function Feed() {
       setDownvoteMap(map);
     });
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -690,7 +974,7 @@ export default function Feed() {
       setSavedPostIds(ids);
     });
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -706,7 +990,7 @@ export default function Feed() {
       setReplyUpvoteMap(map);
     });
     return () => unsub();
-  }, [user]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!selectedPost) return;
@@ -735,7 +1019,71 @@ export default function Feed() {
       setWishlistMap(map);
     });
     return () => unsubscribe();
-  }, [user]);
+  }, [user?.uid]);
+
+  // ─── Paste to add image/pdf ───────────────────────────────
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const pastedImages: File[] = [];
+      const pastedPdfs: File[] = [];
+      const pastedVideos: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) pastedImages.push(file);
+        } else if (item.type === 'application/pdf') {
+          const file = item.getAsFile();
+          if (file) pastedPdfs.push(file);
+        } else if (item.type.startsWith('video/')) {
+          const file = item.getAsFile();
+          if (file) pastedVideos.push(file);
+        }
+      }
+      
+      if (pastedVideos.length > 0) {
+        setVideoFile(pastedVideos[0]);
+        setImageFiles([]);
+        setPdfFile(null);
+      } else {
+        if (pastedImages.length > 0) {
+          const dt = new DataTransfer();
+          pastedImages.forEach(f => dt.items.add(f));
+          handleFilesSelected(dt.files);
+          setVideoFile(null);
+        }
+        if (pastedPdfs.length > 0) {
+          setPdfFile(pastedPdfs[0]);
+          setVideoFile(null);
+        }
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [isModalOpen]);
+
+  // ─── Paste to add image to reply ───────────────────────────────
+  useEffect(() => {
+    if (!selectedPost) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            setReplyImageFile(file);
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [selectedPost]);
 
   // ─── Image Crop Flow ──────────────────────────────────
 
@@ -773,6 +1121,44 @@ export default function Feed() {
       const reader = new FileReader();
       reader.onload = () => setCropImageSrc(reader.result as string);
       reader.readAsDataURL(pendingFiles[nextIndex]);
+    }
+  };
+
+  // ─── Drag and Drop Flow ───────────────────────────────
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      const images = files.filter(f => f.type.startsWith('image/'));
+      const pdfs = files.filter(f => f.type === 'application/pdf');
+      const videos = files.filter(f => f.type.startsWith('video/'));
+      
+      if (videos.length > 0) {
+        setVideoFile(videos[0]);
+        setImageFiles([]);
+        setPdfFile(null);
+      } else {
+        if (images.length > 0) {
+          const dt = new DataTransfer();
+          images.forEach(f => dt.items.add(f));
+          handleFilesSelected(dt.files);
+          setVideoFile(null);
+        }
+        if (pdfs.length > 0) {
+          setPdfFile(pdfs[0]);
+          setVideoFile(null);
+        }
+      }
     }
   };
 
@@ -822,7 +1208,19 @@ export default function Feed() {
 
     try {
       let imageUrls: string[] = [];
-      if (imageFiles.length > 0) {
+      let pdfUrl: string | undefined = undefined;
+      let pdfPages: number = 0;
+      let videoUrl: string | undefined = undefined;
+
+      if (videoFile) {
+        setSubmittingStatus('Uploading video...');
+        videoUrl = await uploadPostVideo(videoFile);
+      } else if (pdfFile) {
+        setSubmittingStatus('Uploading PDF...');
+        const pdfResult = await uploadPostPdf(pdfFile);
+        pdfUrl = pdfResult.url;
+        pdfPages = pdfResult.pages;
+      } else if (imageFiles.length > 0) {
         setSubmittingStatus('Uploading images...');
         imageUrls = await Promise.all(imageFiles.map(file => uploadPostImage(file)));
       }
@@ -859,6 +1257,8 @@ export default function Feed() {
         status: initialStatus,
         privacy,
         imageUrls,
+        ...(pdfUrl ? { pdfUrl, pdfPages } : {}),
+        ...(videoUrl ? { videoUrl } : {}),
         upvotesCount: 0,
         repliesCount: 0,
         ...(showPollCreator && pollChoices.filter(c => c.trim()).length >= 2 ? {
@@ -883,10 +1283,10 @@ export default function Feed() {
             const followerId = f.data().followerId;
             createNotification({ 
               userId: followerId, 
-              type: 'new_message', 
+              type: 'new_post', 
               title: 'New Post', 
               message: `${authorName} just posted: "${title}"`, 
-              link: `/dashboard`,
+              link: `/post/${postDocRef.id}`,
               postId: postDocRef.id
             });
           });
@@ -903,6 +1303,8 @@ export default function Feed() {
 
       setIsModalOpen(false);
       setImageFiles([]);
+      setPdfFile(null);
+      setVideoFile(null);
       setPendingFiles([]);
       setIsAnonymous(false);
       setSelectedPostType('info');
@@ -1139,17 +1541,33 @@ export default function Feed() {
       showToast('You must be verified to reply.', 'error');
       return;
     }
-    if (!selectedPost || !replyContent.trim() || isSubmitting) return;
+    if (!selectedPost || (!replyContent.trim() && !replyImageFile) || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
+      let imageUrl: string | null = null;
+      if (replyImageFile) {
+        setIsUploadingReplyImage(true);
+        const safety = await checkImageSafety(replyImageFile);
+        if (!safety.isSafe) {
+          showToast('Image flagged by safety check. Please choose a different image.', 'error');
+          setIsUploadingReplyImage(false);
+          setIsSubmitting(false);
+          return;
+        }
+        imageUrl = await uploadReplyImage(replyImageFile);
+        setIsUploadingReplyImage(false);
+      }
+
       const replyData = {
         postId: selectedPost.id,
-        content: replyContent.trim(),
+        content: replyContent.trim() || ' ',
         authorId: user.uid,
         authorName: userData?.name || user.email?.split('@')[0] || 'Anonymous',
         authorSchool: userData?.school || 'Unknown School',
+        authorProfilePicture: userData?.profilePicture || null,
         createdAt: serverTimestamp(),
+        ...(imageUrl && { imageUrl }),
         ...(replyingTo && { parentId: replyingTo.id })
       };
 
@@ -1196,6 +1614,7 @@ export default function Feed() {
       }
 
       setReplyContent('');
+      setReplyImageFile(null);
       setReplyingTo(null);
       showToast('Reply posted!', 'success');
     } catch (error) {
@@ -1203,6 +1622,7 @@ export default function Feed() {
       showToast('Failed to post reply', 'error');
     } finally {
       setIsSubmitting(false);
+      setIsUploadingReplyImage(false);
     }
   };
 
@@ -1216,8 +1636,26 @@ export default function Feed() {
         id: post.id,
         title: post.title,
         description: post.content || '',
-        image: post.images?.[0] || undefined,
-        authorName: post.authorName || 'Unknown User'
+        image: post.imageUrls?.[0] || post.imageUrl || undefined,
+        authorName: post.authorName || 'Unknown User',
+        kind: 'post',
+      }
+    });
+  };
+
+  const handleShareProduct = (product: Product) => {
+    const url = window.location.origin + '/product/' + product.id;
+    setShareModalData({
+      isOpen: true,
+      url,
+      title: product.title,
+      sharedPost: {
+        id: product.id,
+        title: product.title,
+        description: typeof product.price === 'number' ? `₹${product.price}` : '',
+        image: product.images?.[0] || product.image || undefined,
+        authorName: product.sellerName || 'Unknown User',
+        kind: 'product',
       }
     });
   };
@@ -1241,66 +1679,91 @@ export default function Feed() {
     }
   };
 
-  const handleDeletePost = async (postId: string) => {
-    if (!window.confirm('Are you sure you want to delete this post? This will also delete all comments and likes.')) return;
-    try {
-      const batch = writeBatch(db);
-      
-      const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
-      const repliesSnap = await getDocs(repliesQ);
-      repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-      
-      const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
-      const upvotesSnap = await getDocs(upvotesQ);
-      upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
+  const handleDeletePost = (postId: string) => {
+    askConfirm(
+      'Delete this post?',
+      'This will also delete all comments and likes. This action cannot be undone.',
+      async () => {
+        setConfirmDialog(null);
+        try {
+          const batch = writeBatch(db);
 
-      const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
-      const downvotesSnap = await getDocs(downvotesQ);
-      downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
+          const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
+          const repliesSnap = await getDocs(repliesQ);
+          repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
-      const reactionsSnap = await getDocs(reactionsQ);
-      reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
+          const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
+          const upvotesSnap = await getDocs(upvotesQ);
+          upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
 
-      const notificationsQ = query(collection(db, 'notifications'), where('postId', '==', postId));
-      const notificationsSnap = await getDocs(notificationsQ);
-      notificationsSnap.forEach(docSnap => batch.delete(docSnap.ref));
-      
-      batch.delete(doc(db, 'posts', postId));
-      
-      await batch.commit();
-      
-      showToast('Post deleted successfully', 'success');
-      setSelectedPost(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'posts');
-    }
+          const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
+          const downvotesSnap = await getDocs(downvotesQ);
+          downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
+
+          const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
+          const reactionsSnap = await getDocs(reactionsQ);
+          reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
+
+          await batch.commit();
+          await deleteDoc(doc(db, 'posts', postId));
+
+          showToast('Post deleted successfully', 'success');
+          setSelectedPost(null);
+        } catch (e) {
+          handleFirestoreError(e, OperationType.DELETE, 'posts');
+        }
+      }
+    );
   };
 
-  const handleDeleteReply = async (replyId: string) => {
-    if (!window.confirm('Are you sure you want to delete this reply?')) return;
-    try {
-      await deleteDoc(doc(db, 'post_replies', replyId));
-      if (selectedPost) {
-        await updateDoc(doc(db, 'posts', selectedPost.id), {
-          repliesCount: Math.max(0, (selectedPost.repliesCount || 0) - 1),
-          updatedAt: serverTimestamp()
-        });
+  const handleDeleteReply = (replyId: string) => {
+    askConfirm(
+      'Delete this reply?',
+      'This action cannot be undone.',
+      async () => {
+        setConfirmDialog(null);
+        try {
+          await deleteDoc(doc(db, 'post_replies', replyId));
+          if (selectedPost) {
+            await updateDoc(doc(db, 'posts', selectedPost.id), {
+              repliesCount: Math.max(0, (selectedPost.repliesCount || 0) - 1),
+              updatedAt: serverTimestamp()
+            });
+          }
+          showToast('Reply deleted', 'success');
+        } catch (e) {
+          handleFirestoreError(e, OperationType.DELETE, 'post_replies');
+        }
       }
-      showToast('Reply deleted', 'success');
+    );
+  };
+
+  const handleEditReply = async (replyId: string, newContent: string) => {
+    try {
+      await updateDoc(doc(db, 'post_replies', replyId), {
+        content: newContent,
+        edited: true,
+        updatedAt: serverTimestamp()
+      });
+      showToast('Comment updated', 'success');
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'post_replies');
+      handleFirestoreError(e, OperationType.UPDATE, 'post_replies');
     }
   };
 
   // ─── Filtering (block system) ────────────────────────────
 
-  const filteredPosts = posts.filter(p => {
+  let filteredPosts = posts.filter(p => {
     if (blockedIds.has(p.authorId) || blockedByIds.has(p.authorId)) return false;
     if (p.privacy === 'private' && p.authorId !== user?.uid && !friendIds.has(p.authorId)) return false;
     return true;
   });
-  const filteredProducts = products.filter(p => !blockedIds.has(p.sellerId) && !blockedByIds.has(p.sellerId));
+  let filteredProducts = products.filter(p => !blockedIds.has(p.sellerId) && !blockedByIds.has(p.sellerId));
+
+  if (!user) {
+    filteredPosts = filteredPosts.slice(0, 5);
+    filteredProducts = filteredProducts.slice(0, 5);
+  }
 
   const combinedFeed = useMemo(() => {
     let combined: any[] = [];
@@ -1336,25 +1799,56 @@ export default function Feed() {
         description="Discover school info, notes, and interschool events on Nextbench Community." 
       />
 
+      {/* Unauthenticated Banner */}
+      {!user && (
+        <div className="bg-luxury-ink text-surface-base px-4 py-3 text-center text-sm font-semibold flex items-center justify-center gap-3 relative z-40 flex-wrap">
+          <span>Sign up to join the conversation, create posts, and get the full experience!</span>
+          <Link to="/signup" className="bg-brand-teal text-white px-4 py-1.5 rounded-full hover:bg-brand-teal/90 transition-colors text-xs uppercase tracking-widest font-bold shrink-0">
+            Sign Up
+          </Link>
+        </div>
+      )}
+
       {/* Sticky Header Tabs */}
       <div className="sticky top-0 z-40 nav-glass border-b flex items-center px-4 sm:px-6 gap-1" style={{ borderColor: 'var(--color-border)' }}>
         <button
-          onClick={() => setContentType('all')}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'all' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          onClick={() => { setContentType('all'); setVisibleCount(6); }}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'all' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           For you
+          {contentType === 'all' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
         <button
-          onClick={() => setContentType('posts')}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'posts' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          onClick={() => { setContentType('posts'); setVisibleCount(6); }}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'posts' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           Posts
+          {contentType === 'posts' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
         <button
-          onClick={() => setContentType('marketplace')}
-          className={`py-3.5 px-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${contentType === 'marketplace' ? 'border-luxury-ink text-luxury-ink' : 'border-transparent text-luxury-ink/40 hover:text-luxury-ink/70'}`}
+          onClick={() => { setContentType('marketplace'); setVisibleCount(6); }}
+          className={`relative py-3.5 px-4 text-sm font-semibold transition-colors whitespace-nowrap ${contentType === 'marketplace' ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70'}`}
         >
           Marketplace
+          {contentType === 'marketplace' && (
+            <motion.div
+              layoutId="feed-tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-0.5 bg-luxury-ink"
+              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
       </div>
 
@@ -1390,15 +1884,14 @@ export default function Feed() {
 
       {/* Feed */}
       {loading ? (
-        <div className="py-20 text-center">
-          <div className="w-8 h-8 border-2 border-brand-teal border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-luxury-ink/30 text-sm">Loading...</p>
+        <div className="flex flex-col w-full min-w-0">
+          {Array.from({ length: 5 }).map((_, i) => <PostCardSkeleton key={i} />)}
         </div>
       ) : (
         <>
           <div className="flex flex-col w-full min-w-0">
             <AnimatePresence>
-              {combinedFeed.map((item, index) => {
+              {combinedFeed.slice(0, visibleCount).map((item, index) => {
                 const isProduct = item._kind === 'product';
                 
                 const card = isProduct ? (
@@ -1407,6 +1900,7 @@ export default function Feed() {
                     product={item as Product} 
                     isWishlisted={wishlisted.has(item.id)} 
                     wishlistDocId={wishlistMap[item.id]} 
+                    onShare={handleShareProduct}
                   />
                 ) : (
                   <PostCard 
@@ -1437,7 +1931,25 @@ export default function Feed() {
                 return card;
               })}
             </AnimatePresence>
+
+            {/* Load-more skeletons shown while more items exist */}
+            {visibleCount < combinedFeed.length && (
+              <InfiniteScrollSentinel onVisible={() => setVisibleCount(v => v + 6)} />
+            )}
           </div>
+
+          {!user && combinedFeed.length > 0 && visibleCount >= combinedFeed.length && (
+            <div className="py-12 px-6 flex flex-col items-center justify-center text-center border-t mt-4 relative z-10" style={{ borderColor: 'var(--color-border)' }}>
+              <Lock className="w-12 h-12 text-luxury-ink/20 mb-4" />
+              <h3 className="text-xl font-bold text-luxury-ink mb-2">You've reached the end of your preview</h3>
+              <p className="text-luxury-ink/50 text-sm max-w-sm mb-6">
+                Sign up for free to unlock unlimited posts, full marketplace access, and join the community.
+              </p>
+              <Link to="/signup" className="bg-brand-teal text-white px-8 py-3 rounded-xl font-bold hover:bg-brand-teal/90 transition-all hover:scale-105 shadow-xl shadow-brand-teal/20">
+                Register Now
+              </Link>
+            </div>
+          )}
 
           {!loading && combinedFeed.length === 0 && (
             <div className="py-20 text-center px-4">
@@ -1466,6 +1978,7 @@ export default function Feed() {
             onShare={handleShare}
             onDelete={handleDeletePost}
             onDeleteReply={handleDeleteReply}
+            onEditReply={handleEditReply}
             onUpvoteReply={handleUpvoteReply}
             onReply={handleReplyTo}
             replyUpvotedIds={replyUpvotedIds}
@@ -1477,13 +1990,17 @@ export default function Feed() {
             setReplyContent={setReplyContent}
             onSubmitReply={handleSubmitReply}
             isSubmitting={isSubmitting}
+            replyImageFile={replyImageFile}
+            setReplyImageFile={setReplyImageFile}
+            isUploadingReplyImage={isUploadingReplyImage}
           />
         )}
       </AnimatePresence>
 
       {/* ─── Create Post Modal ──────────────────────────── */}
-      <AnimatePresence>
-        {isModalOpen && (
+      {createPortal(
+        <AnimatePresence>
+          {isModalOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1495,27 +2012,41 @@ export default function Feed() {
               const contentNode = form?.elements.namedItem('content') as HTMLTextAreaElement;
               const title = titleNode?.value || '';
               const content = contentNode?.value || '';
-              if (title.trim() || content.trim() || imageFiles.length > 0) {
-                if (window.confirm('Discard your post?')) {
-                  setIsModalOpen(false);
-                  setImageFiles([]);
-                  setPendingFiles([]);
-                }
-              } else {
+              const closeModal = () => {
                 setIsModalOpen(false);
                 setImageFiles([]);
+                setPdfFile(null);
                 setPendingFiles([]);
+              };
+              if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
+                askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                  setConfirmDialog(null);
+                  closeModal();
+                });
+              } else {
+                closeModal();
               }
             }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-surface-card w-full h-full sm:h-auto sm:rounded-3xl sm:max-w-2xl relative shadow-2xl overflow-hidden sm:max-h-[90vh] flex flex-col"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`bg-surface-card w-full h-full sm:h-auto sm:rounded-3xl sm:max-w-2xl relative shadow-2xl overflow-hidden sm:max-h-[90vh] flex flex-col transition-colors ${isDragging ? 'border-2 border-brand-teal bg-surface-soft/50' : ''}`}
             >
+              {isDragging && (
+                <div className="absolute inset-0 z-50 bg-brand-teal/10 backdrop-blur-sm border-2 border-dashed border-brand-teal rounded-3xl flex items-center justify-center pointer-events-none">
+                  <div className="bg-surface-card px-6 py-4 rounded-2xl shadow-xl flex items-center gap-3">
+                    <Paperclip size={24} className="text-brand-teal" />
+                    <span className="font-bold text-luxury-ink">Drop media to attach</span>
+                  </div>
+                </div>
+              )}
               {/* Close Button */}
               <button
                 type="button"
@@ -1526,16 +2057,19 @@ export default function Feed() {
                   const contentNode = form?.elements.namedItem('content') as HTMLTextAreaElement;
                   const title = titleNode?.value || '';
                   const content = contentNode?.value || '';
-                  if (title.trim() || content.trim() || imageFiles.length > 0) {
-                    if (window.confirm('Discard your post?')) {
-                      setIsModalOpen(false);
-                      setImageFiles([]);
-                      setPendingFiles([]);
-                    }
-                  } else {
+                  const closeModal = () => {
                     setIsModalOpen(false);
                     setImageFiles([]);
+                    setPdfFile(null);
                     setPendingFiles([]);
+                  };
+                  if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
+                    askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                      setConfirmDialog(null);
+                      closeModal();
+                    });
+                  } else {
+                    closeModal();
                   }
                 }}
                 className="absolute top-4 right-4 z-50 w-8 h-8 flex items-center justify-center rounded-full bg-luxury-ink/10 hover:bg-luxury-ink/20 text-luxury-ink/50 hover:text-luxury-ink/80 transition-all"
@@ -1567,17 +2101,17 @@ export default function Feed() {
                   {/* Top Bar with Avatar */}
                   <div className="flex items-center gap-3 mb-6 px-1">
                     <div className="w-10 h-10 rounded-full bg-brand-teal/10 flex items-center justify-center text-brand-teal font-bold text-sm overflow-hidden shrink-0">
-                      {user?.photoURL ? (
-                        <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      {userData?.profilePicture ? (
+                        <img src={getOptimizedImageUrl(userData.profilePicture)} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
-                        userData?.firstName?.[0]?.toUpperCase() || <Users size={16} />
+                        userData?.name?.[0]?.toUpperCase() || <Users size={16} />
                       )}
                     </div>
                     <div className="flex flex-col">
                       <span className="text-[15px] font-semibold text-luxury-ink">
                         {selectedPostType === 'confession' && isAnonymous 
                           ? userData?.anonymousPersonaName || 'Anonymous' 
-                          : (userData?.firstName ? `${userData.firstName} ${userData.lastName || ''}`.trim() : user?.displayName || 'User')}
+                          : (userData?.name || 'User')}
                       </span>
                       {selectedPostType === 'confession' && !isAnonymous && (
                         <span className="text-[11px] text-amber-500 font-semibold flex items-center gap-1">
@@ -1603,7 +2137,7 @@ export default function Feed() {
                       name="content"
                       required
                       placeholder="What's on your mind?"
-                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-200px"
+                      className="w-full flex-1 bg-transparent text-[16px] leading-relaxed text-luxury-ink/80 placeholder-luxury-ink/40 focus:outline-none resize-none min-h-75"
                     ></textarea>
 
                     {/* Poll Creator */}
@@ -1682,6 +2216,28 @@ export default function Feed() {
                       </div>
                     )}
 
+                    {/* PDF Preview */}
+                    {pdfFile && (
+                      <div className="mt-4 flex items-center gap-3 p-3 rounded-xl border border-luxury-ink/10 bg-surface-soft shrink-0">
+                        <FileText size={24} className="text-brand-teal" />
+                        <span className="flex-1 text-sm font-medium text-luxury-ink truncate">{pdfFile.name}</span>
+                        <button type="button" onClick={() => setPdfFile(null)} className="p-1 rounded-full text-luxury-ink/40 hover:text-red-500 hover:bg-red-50">
+                          <X size={16} />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Video Preview */}
+                    {videoFile && (
+                      <div className="mt-4 flex items-center gap-3 p-3 rounded-xl border border-luxury-ink/10 bg-surface-soft shrink-0">
+                        <Film size={24} className="text-brand-teal" />
+                        <span className="flex-1 text-sm font-medium text-luxury-ink truncate">{videoFile.name}</span>
+                        <button type="button" onClick={() => setVideoFile(null)} className="p-1 rounded-full text-luxury-ink/40 hover:text-red-500 hover:bg-red-50">
+                          <X size={16} />
+                        </button>
+                      </div>
+                    )}
+
                     {/* Image Previews */}
                     {imageFiles.length > 0 && (
                       <div className="mt-4 flex gap-2 overflow-x-auto pb-2 no-scrollbar shrink-0">
@@ -1707,19 +2263,38 @@ export default function Feed() {
                   <div className="mt-4 pt-4 border-t border-luxury-ink/5 flex flex-wrap items-center justify-between gap-y-3 relative px-1 bottom-0 bg-surface-card pb-2">
                     <div className="flex items-center gap-1 relative">
                       <label className="p-2.5 rounded-full hover:bg-surface-soft text-luxury-ink/50 hover:text-brand-teal transition-colors cursor-pointer group relative">
-                        <ImageIcon size={22} />
+                        <Paperclip size={22} />
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/*,application/pdf,video/mp4,video/webm,video/quicktime"
                           multiple
                           onChange={(e) => {
-                            if (e.target.files && e.target.files.length > 0) {
-                              handleFilesSelected(e.target.files);
+                            if (!e.target.files) return;
+                            const files = Array.from(e.target.files);
+                            const images = files.filter(f => f.type.startsWith('image/'));
+                            const pdfs = files.filter(f => f.type === 'application/pdf');
+                            const videos = files.filter(f => f.type.startsWith('video/'));
+                            
+                            if (videos.length > 0) {
+                              setVideoFile(videos[0]);
+                              setImageFiles([]);
+                              setPdfFile(null);
+                            } else {
+                              if (images.length > 0) {
+                                const dt = new DataTransfer();
+                                images.forEach(f => dt.items.add(f));
+                                handleFilesSelected(dt.files);
+                                setVideoFile(null);
+                              }
+                              if (pdfs.length > 0) {
+                                setPdfFile(pdfs[0]);
+                                setVideoFile(null);
+                              }
                             }
                           }}
                           className="hidden"
                         />
-                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-luxury-ink text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Image</span>
+                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-gray-100 text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Media</span>
                       </label>
                       <button
                         type="button"
@@ -1727,7 +2302,7 @@ export default function Feed() {
                         className={`p-2.5 rounded-full transition-colors group relative ${showPollCreator ? 'bg-brand-teal/10 text-brand-teal' : 'hover:bg-surface-soft text-luxury-ink/50 hover:text-brand-teal'}`}
                       >
                         <BarChart3 size={22} />
-                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-luxury-ink text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Poll</span>
+                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-gray-100 text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Add Poll</span>
                       </button>
 
                       <div className="relative">
@@ -1802,16 +2377,19 @@ export default function Feed() {
                           const contentNode = form?.elements.namedItem('content') as HTMLTextAreaElement;
                           const title = titleNode?.value || '';
                           const content = contentNode?.value || '';
-                          if (title.trim() || content.trim() || imageFiles.length > 0) {
-                            if (window.confirm('Discard your post?')) {
-                              setIsModalOpen(false);
-                              setImageFiles([]);
-                              setPendingFiles([]);
-                            }
-                          } else {
+                          const closeModal = () => {
                             setIsModalOpen(false);
                             setImageFiles([]);
+                            setPdfFile(null);
                             setPendingFiles([]);
+                          };
+                          if (title.trim() || content.trim() || imageFiles.length > 0 || pdfFile) {
+                            askConfirm('Discard this post?', 'Your draft will be lost.', () => {
+                              setConfirmDialog(null);
+                              closeModal();
+                            });
+                          } else {
+                            closeModal();
                           }
                         }}
                         className="px-4 py-2 text-[14px] font-semibold text-luxury-ink/50 hover:text-luxury-ink transition-colors"
@@ -1832,7 +2410,9 @@ export default function Feed() {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+    )}
 
       {/* ─── Image Cropper ──────────────────────────────── */}
       {cropImageSrc && (
@@ -1850,6 +2430,15 @@ export default function Feed() {
         postUrl={shareModalData.url}
         postTitle={shareModalData.title}
         sharedPost={shareModalData.sharedPost}
+      />
+
+      {/* ─── Confirm Dialog (custom, replaces window.confirm) ──── */}
+      <ConfirmDialog
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        onCancel={() => setConfirmDialog(null)}
       />
 
     </div>

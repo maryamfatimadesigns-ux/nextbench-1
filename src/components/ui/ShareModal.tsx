@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, Send, Link as LinkIcon, CheckCircle2, ShieldCheck, User, Share2 } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { collection, query, where, getDocs, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, arrayUnion, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, arrayUnion, limit, documentId } from 'firebase/firestore';
 import { getOrCreateDMRoom } from '../../lib/dm';
 import { useToast } from '../../lib/ToastContext';
 import { getOptimizedImageUrl } from '../../lib/utils';
@@ -15,6 +15,7 @@ interface SharedPostData {
   description: string;
   image?: string;
   authorName: string;
+  kind?: 'post' | 'product';
 }
 
 interface ShareModalProps {
@@ -50,7 +51,7 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
       }
     };
     fetchFollowing();
-  }, [isOpen, user]);
+  }, [isOpen, user?.uid]);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -76,6 +77,9 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
         where('name', '<=', endStr),
         limit(20)
       );
+    } else if (followingIds.size > 0) {
+      const idsToFetch = Array.from(followingIds).slice(0, 30);
+      q = query(collection(db, 'users'), where(documentId(), 'in', idsToFetch));
     } else {
       q = query(collection(db, 'users'), limit(20));
     }
@@ -95,7 +99,7 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
     });
 
     return () => unsub();
-  }, [searchUsers, isOpen, user]);
+  }, [searchUsers, isOpen, user?.uid]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(postUrl);
@@ -170,7 +174,7 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[150] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
+          className="fixed inset-0 z-150 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-luxury-ink/20 backdrop-blur-sm"
           onClick={onClose}
         >
           <motion.div
@@ -270,7 +274,7 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
                         <div className="truncate">
                           <p className="font-bold text-luxury-ink text-sm flex items-center gap-1.5">
                             {u.name}
-                            {u.verified && <ShieldCheck size={12} className="text-brand-teal" />}
+                            {u.verified && <ShieldCheck size={12} className="text-brand-teal" title="Verified" />}
                           </p>
                           <p className="text-[10px] text-luxury-ink/40 truncate">{u.school || 'Nextbench User'}</p>
                         </div>

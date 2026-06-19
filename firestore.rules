@@ -28,6 +28,7 @@ service cloud.firestore {
         && data.updatedAt is timestamp
         // Cloudinary URLs can be long — allow up to 2000 chars
         && (!data.keys().hasAny(['profilePicture']) || (data.profilePicture == null || (data.profilePicture is string && data.profilePicture.size() <= 2000)))
+        && (!data.keys().hasAny(['coverPhoto']) || (data.coverPhoto == null || (data.coverPhoto is string && data.coverPhoto.size() <= 2000)))
         && (!data.keys().hasAny(['idCardUrl']) || (data.idCardUrl == null || (data.idCardUrl is string && data.idCardUrl.size() <= 2000)))
         && (!data.keys().hasAny(['selfieUrl']) || (data.selfieUrl == null || (data.selfieUrl is string && data.selfieUrl.size() <= 2000)))
         && (!data.keys().hasAny(['about']) || (data.about == null || (data.about is string && data.about.size() <= 600)))
@@ -38,7 +39,11 @@ service cloud.firestore {
         && (!data.keys().hasAny(['orgType']) || (data.orgType == null || data.orgType in ['company', 'school', 'coaching', 'ngo', 'other']))
         && (!data.keys().hasAny(['orgDocumentUrl']) || (data.orgDocumentUrl == null || (data.orgDocumentUrl is string && data.orgDocumentUrl.size() <= 2000)))
         && (!data.keys().hasAny(['orgWebsite']) || (data.orgWebsite == null || (data.orgWebsite is string && data.orgWebsite.size() <= 500)))
-        && (!data.keys().hasAny(['orgDescription']) || (data.orgDescription == null || (data.orgDescription is string && data.orgDescription.size() <= 600)));
+        && (!data.keys().hasAny(['orgDescription']) || (data.orgDescription == null || (data.orgDescription is string && data.orgDescription.size() <= 600)))
+        // Referral System
+        && (!data.keys().hasAny(['referralCode']) || (data.referralCode == null || data.referralCode is string))
+        && (!data.keys().hasAny(['referredBy']) || (data.referredBy == null || data.referredBy is string))
+        && (!data.keys().hasAny(['referralCount']) || (data.referralCount is number));
     }
 
     match /users/{userId} {
@@ -63,10 +68,11 @@ service cloud.firestore {
           && (!incoming().keys().hasAny(['anonymousPersonaName']) || (incoming().anonymousPersonaName == null || incoming().anonymousPersonaName is string))
           && incoming().updatedAt == request.time)
         ||
-        (incoming().diff(existing()).affectedKeys().hasOnly(['username', 'lastUsernameChange', 'name', 'city', 'profilePicture', 'about', 'idCardUrl', 'selfieUrl', 'verificationStatus', 'updatedAt', 'anonymousPersonaName', 'orgName', 'orgWebsite', 'orgDescription']) 
+        (incoming().diff(existing()).affectedKeys().hasOnly(['username', 'lastUsernameChange', 'name', 'city', 'profilePicture', 'coverPhoto', 'about', 'idCardUrl', 'selfieUrl', 'verificationStatus', 'updatedAt', 'anonymousPersonaName', 'orgName', 'orgWebsite', 'orgDescription', 'referralCode']) 
           && request.auth.uid == userId
           && isValidUser(incoming())
           && (incoming().get('verificationStatus', 'approved') == existing().get('verificationStatus', 'approved') || (existing().get('verificationStatus', 'approved') in ['rejected', 'flagged_manual'] && incoming().get('verificationStatus', 'approved') == 'pending'))
+          && (!incoming().diff(existing()).affectedKeys().hasAny(['referralCode']) || existing().get('referralCode', null) == null)
           && incoming().updatedAt == request.time)
         ||
         (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['verified', 'reputation', 'isAdmin', 'verificationStatus', 'verificationRejectionReason', 'city', 'school', 'updatedAt'])
@@ -78,9 +84,23 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly(['online', 'lastSeen'])
           && incoming().online is bool
           && incoming().lastSeen == request.time)
-      );
+        ||
+        // Chat privacy toggle
+        (request.auth.uid == userId
+          && incoming().diff(existing()).affectedKeys().hasOnly(['chatPrivacy'])
+          && incoming().chatPrivacy is map
+          && incoming().chatPrivacy.keys().hasOnly(['followersOnly'])
+          && incoming().chatPrivacy.followersOnly is bool)
+        );
 
       allow delete: if isAdmin();
+
+      match /referrals/{referredId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn()
+          && request.auth.uid == referredId
+          && incoming().timestamp == request.time;
+      }
     }
 
     function isValidProduct(data) {
@@ -164,10 +184,11 @@ service cloud.firestore {
 
     function isValidMessage(data) {
       return data.keys().hasAll(['senderId', 'createdAt'])
-        && (data.keys().hasAny(['text', 'image', 'sharedPost']))
+        && (data.keys().hasAny(['text', 'image', 'sharedPost', 'postId']))
         && (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 2000))
         && (!data.keys().hasAny(['image']) || (data.image is string && data.image.size() <= 2000))
-        && (!data.keys().hasAny(['sharedPost']) || (data.sharedPost is map));
+        && (!data.keys().hasAny(['sharedPost']) || (data.sharedPost is map))
+        && (!data.keys().hasAny(['postId']) || (data.postId is string));
     }
 
     match /chatRooms/{roomId} {
@@ -184,12 +205,17 @@ service cloud.firestore {
         && request.auth.uid in incoming().participants
         && isValidChatRoom(incoming());
         
-      allow update: if isVerified() && isValidId(roomId)
+      allow update: if isSignedIn() && isValidId(roomId)
         && request.auth.uid in existing().participants
-        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy'])
-          || isAdmin());
+        && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy', 'status', 'requestedBy', 'mutedBy', 'pinnedBy', 'deletedBy' ])
+        || isAdmin());
+
+      allow delete: if isVerified() && isValidId(roomId)
+        && request.auth.uid in existing().participants
+        && existing().get('status', '') == 'pending';
 
       match /messages/{messageId} {
+        allow get: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants;
         allow list: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants;
         allow create: if isVerified() 
           && isValidId(messageId)
@@ -206,7 +232,13 @@ service cloud.firestore {
              ||
              (incoming().diff(existing()).affectedKeys().hasOnly(['isDeletedForEveryone', 'text', 'image']) 
               && request.auth.uid == existing().senderId)
+              ||
+                incoming().diff(existing()).affectedKeys().hasOnly(['reactions'])
           );
+
+        allow delete: if isVerified() 
+          && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          && get(/databases/$(database)/documents/chatRooms/$(roomId)).data.get('status', '') == 'pending';
       }
     }
 
@@ -424,9 +456,16 @@ service cloud.firestore {
         && (!incoming().keys().hasAny(['upvotesCount']) || (incoming().upvotesCount is number))
         && (!incoming().keys().hasAny(['repliesCount']) || (incoming().repliesCount is number))
         && incoming().createdAt == request.time;
-      allow update: if isVerified() && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['upvotesCount', 'repliesCount', 'updatedAt'])
-      );
+        allow update: if isVerified() && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['upvotesCount', 'repliesCount', 'updatedAt'])
+          ||
+          (resource.data.authorId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'edited', 'updatedAt'])
+            && incoming().content is string
+            && incoming().content.size() > 0 && incoming().content.size() <= 1000
+            && incoming().edited == true
+            && incoming().updatedAt == request.time)
+        );
       allow delete: if isVerified() && (resource.data.authorId == request.auth.uid || get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid || isAdmin());
     }
 

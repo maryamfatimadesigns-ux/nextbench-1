@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Moon, Sun, ShieldAlert, Edit2, LogOut, Loader2, LifeBuoy, Bookmark, User, Settings, ExternalLink, Trash2, Lock } from 'lucide-react';
+import { X, Moon, Sun, ShieldAlert, Edit2, LogOut, Loader2, LifeBuoy, Bookmark, User, Settings, ExternalLink, Trash2, Lock, UserPlus } from 'lucide-react';
 import { collection, query, where, getDocs, deleteDoc, doc, getDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { auth, db, getMessagingInstance } from '../../lib/firebase';
+import { signOut } from 'firebase/auth';
+import { getToken } from 'firebase/messaging';
 import { useAuth } from '../../lib/AuthContext';
 import { useTheme } from '../../lib/ThemeContext';
 import { useToast } from '../../lib/ToastContext';
@@ -22,6 +24,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'account' | 'support' | 'saved'>('general');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<any[]>([]);
   const [loadingBlocked, setLoadingBlocked] = useState(false);
   const [savedPosts, setSavedPosts] = useState<any[]>([]);
@@ -56,13 +59,82 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
   };
 
   useEffect(() => {
+    const hasNotificationAPI = typeof window !== 'undefined' && 'Notification' in window;
+    if (hasNotificationAPI && Notification.permission === 'granted' && userData?.fcmTokens && userData.fcmTokens.length > 0) {
+      setNotificationsEnabled(true);
+    } else {
+      setNotificationsEnabled(false);
+    }
+  }, [userData]);
+
+  const toggleNotifications = async () => {
+    if (!user) return;
+    
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          fcmTokens: []
+        });
+        showToast('Push notifications disabled', 'info');
+      } catch(err) {
+        console.error(err);
+      }
+      return;
+    }
+
+    try {
+      const messagingInstance = await getMessagingInstance();
+      if (!messagingInstance) {
+        showToast('Push notifications not supported on this browser', 'error');
+        return;
+      }
+
+      const hasNotificationAPI = typeof window !== 'undefined' && 'Notification' in window;
+      if (!hasNotificationAPI) {
+        showToast('Push notifications are not supported on this device', 'error');
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
+        if (!vapidKey) {
+          showToast('VAPID key not configured for push notifications.', 'error');
+          return;
+        }
+
+        const token = await getToken(messagingInstance, { vapidKey });
+        
+        if (token) {
+          const currentTokens = userData?.fcmTokens || [];
+          if (!currentTokens.includes(token)) {
+            await updateDoc(doc(db, 'users', user.uid), {
+              fcmTokens: [...currentTokens, token]
+            });
+          }
+          setNotificationsEnabled(true);
+          showToast('Push notifications enabled!', 'success');
+        } else {
+          showToast('Failed to generate notification token', 'error');
+        }
+      } else {
+        showToast('Notification permission denied', 'error');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('Error enabling notifications', 'error');
+    }
+  };
+
+  useEffect(() => {
     if (isOpen && activeTab === 'blocked' && user) {
       loadBlockedUsers();
     }
     if (isOpen && activeTab === 'saved' && user) {
       loadSavedPosts();
     }
-  }, [isOpen, activeTab, user]);
+  }, [isOpen, activeTab, user?.uid]);
 
   useEffect(() => {
     if (isOpen && userData?.anonymousPersonaName) {
@@ -214,6 +286,16 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      onClose();
+      navigate('/login');
+    } catch (err) {
+      showToast('Failed to log out', 'error');
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -222,7 +304,7 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-md"
+        className="fixed inset-0 z-100 flex items-center justify-center p-4 backdrop-blur-md"
         style={{ background: 'var(--color-overlay-heavy)' }}
         onClick={onClose}
       >
@@ -242,9 +324,9 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
             </button>
           </div>
 
-          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-[400px]">
+          <div className="flex flex-1 overflow-hidden min-h-[50vh] sm:min-h-100">
             {/* Sidebar */}
-            <div className="w-[140px] sm:w-[200px] shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="w-35 sm:w-50 shrink-0 border-r bg-surface-base flex flex-col p-2 space-y-1 overflow-y-auto" style={{ borderColor: 'var(--color-border)' }}>
               {[
                 { id: 'general', label: 'General', icon: Settings },
                 { id: 'account', label: 'Account', icon: User },
@@ -312,6 +394,47 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                   </div>
 
                   <div>
+                    <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest">Community</h3>
+                    <Link
+                      to="/invite"
+                      onClick={onClose}
+                      className="flex items-center justify-between p-4 rounded-xl bg-surface-soft/50 border hover:border-brand-teal transition-all group mb-8"
+                      style={{ borderColor: 'var(--color-border)' }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-brand-pink/10 rounded-lg text-brand-pink">
+                          <UserPlus size={20} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-luxury-ink text-sm group-hover:text-brand-teal transition-colors">Invite Friends</p>
+                          <p className="text-[10px] text-luxury-ink/50 uppercase tracking-widest">Earn rewards for referrals</p>
+                        </div>
+                      </div>
+                    </Link>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest">Notifications</h3>
+                    <div className="flex items-center justify-between p-4 rounded-xl bg-surface-soft/50 border" style={{ borderColor: 'var(--color-border)' }}>
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-brand-teal/10 rounded-lg text-brand-teal">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                        </div>
+                        <div>
+                          <p className="font-bold text-luxury-ink text-sm">Push Notifications</p>
+                          <p className="text-[10px] text-luxury-ink/50 uppercase tracking-widest">Get notified when app is closed</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={toggleNotifications}
+                        className={`w-12 h-6 rounded-full transition-all relative ${notificationsEnabled ? 'bg-brand-teal' : 'bg-luxury-ink/20'}`}
+                      >
+                        <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${notificationsEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
                     <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest">Support</h3>
                     {userData?.isAdmin ? (
                       <Link
@@ -347,6 +470,25 @@ export default function ProfileSettings({ isOpen, onClose }: ProfileSettingsProp
                         </div>
                       </button>
                     )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-luxury-ink mb-4 uppercase tracking-widest">Danger Zone</h3>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center justify-between p-4 rounded-xl bg-surface-soft/50 border hover:border-red-500 transition-all group"
+                      style={{ borderColor: 'var(--color-border)' }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-red-500/10 rounded-lg text-red-500">
+                          <LogOut size={20} />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold text-luxury-ink text-sm group-hover:text-red-500 transition-colors">Log Out</p>
+                          <p className="text-[10px] text-luxury-ink/50 uppercase tracking-widest">Sign out of your account</p>
+                        </div>
+                      </div>
+                    </button>
                   </div>
                 </div>
               )}

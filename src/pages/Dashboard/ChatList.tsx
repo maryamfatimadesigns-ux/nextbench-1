@@ -40,6 +40,7 @@ export default function ChatList() {
   const [userResults, setUserResults] = useState<any[]>([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [creatingDM, setCreatingDM] = useState(false);
+  const [chatSearchTerm, setChatSearchTerm] = useState('');
 
   // Clubs state
   const [showCreateClub, setShowCreateClub] = useState(false);
@@ -54,6 +55,14 @@ export default function ChatList() {
   const blockedByIds = useBlockedByIds();
 
   useScrollLock(showNewDM || showCreateClub);
+
+  // Compute DM user IDs for presence tracking — must be before any conditional returns
+  const dmUids = [...new Set(
+    chatRooms
+      .map(r => r.participants.find(id => id !== user?.uid))
+      .filter(Boolean) as string[]
+  )];
+  const presenceMap = usePresenceMap(dmUids);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -122,12 +131,12 @@ export default function ChatList() {
         setLoading(false);
       }
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'chatRooms');
+      handleFirestoreError(err, OperationType.LIST, 'chatRooms', false);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user?.uid]);
 
   // Search users for new DM
   useEffect(() => {
@@ -174,7 +183,7 @@ export default function ChatList() {
     });
 
     return () => unsub();
-  }, [searchUsers, showNewDM, user]);
+  }, [searchUsers, showNewDM, user?.uid]);
 
   const handleStartDM = async (otherUserId: string) => {
     if (!user || creatingDM) return;
@@ -217,24 +226,7 @@ export default function ChatList() {
     }
   };
 
-  if (userData && !userData.verified) {
-    return (
-      <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto text-center">
-        <div className="bg-surface-card rounded-3xl p-20 luxury-shadow border border-luxury-ink/5">
-          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Lock className="text-amber-500" size={32} />
-          </div>
-          <h3 className="text-2xl font-serif font-bold text-luxury-ink mb-2 italic">Verification <span className="not-italic">Required</span></h3>
-          <p className="text-luxury-ink/40 text-sm max-w-sm mx-auto mb-8 font-medium">To keep our campus safe, you must be a verified student to access direct messaging.</p>
-          <Link to="/verification" className="inline-block bg-brand-teal text-white px-8 py-4 rounded-full font-bold hover:bg-brand-mint transition-all luxury-shadow uppercase text-[10px] tracking-widest">
-            Complete Verification
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const [chatSearchTerm, setChatSearchTerm] = useState('');
+  const isUnverified = !!(userData && !userData.verified);
 
   const allItems = [
     ...chatRooms.map(r => ({ type: 'chat' as const, data: r, updated: r.updatedAt?.toMillis?.() || 0 })),
@@ -255,15 +247,25 @@ export default function ChatList() {
         return true;
       });
 
-    const dmUids = [...new Set(
-        chatRooms
-          .map(r => r.participants.find(id => id !== user?.uid))
-          .filter(Boolean) as string[]
-      )];
-      const presenceMap = usePresenceMap(dmUids);
-
   const pendingRequests = filteredItems.filter(item => item.type === 'chat' && (item.data as ChatRoom).status === 'pending' && (item.data as ChatRoom).requestedBy !== user?.uid);
   const activeChatsAndClubs = filteredItems.filter(item => !(item.type === 'chat' && (item.data as ChatRoom).status === 'pending' && (item.data as ChatRoom).requestedBy !== user?.uid));
+
+  if (isUnverified) {
+    return (
+      <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto text-center">
+        <div className="bg-surface-card rounded-3xl p-20 luxury-shadow border border-luxury-ink/5">
+          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Lock className="text-amber-500" size={32} />
+          </div>
+          <h3 className="text-2xl font-serif font-bold text-luxury-ink mb-2 italic">Verification <span className="not-italic">Required</span></h3>
+          <p className="text-luxury-ink/40 text-sm max-w-sm mx-auto mb-8 font-medium">To keep our campus safe, you must be a verified student to access direct messaging.</p>
+          <Link to="/verification" className="inline-block bg-brand-teal text-white px-8 py-4 rounded-full font-bold hover:bg-brand-mint transition-all luxury-shadow uppercase text-[10px] tracking-widest">
+            Complete Verification
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pb-20 max-w-2xl mx-auto min-h-screen">
@@ -388,7 +390,7 @@ export default function ChatList() {
                       </div>
                       {room.otherUser?.verified && (
                         <div className="absolute bottom-0 right-0 bg-brand-teal text-white p-0.5 rounded-full border-2 border-surface-base">
-                          <ShieldCheck size={10} />
+                          <ShieldCheck size={10} title="Verified" />
                         </div>
                       )}
                       {(() => {
@@ -488,7 +490,7 @@ export default function ChatList() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm"
             onClick={() => { setShowNewDM(false); setSearchUsers(''); }}
           >
             <motion.div
@@ -558,7 +560,7 @@ export default function ChatList() {
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-luxury-ink text-sm flex items-center gap-1.5">
                             {u.name}
-                            {u.verified && <ShieldCheck size={14} className="text-brand-teal" />}
+                            {u.verified && <ShieldCheck size={14} className="text-brand-teal" title="Verified" />}
                           </p>
                           <p className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 truncate">{u.school}</p>
                         </div>
@@ -589,7 +591,7 @@ export default function ChatList() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm"
+            className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm"
             onClick={() => setShowCreateClub(false)}
           >
             <motion.div

@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, ChevronLeft, ChevronRight, Star, MessageSquare, Heart, Share2, X, Send, MapPin } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, deleteDoc, arrayUnion } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
+import LinkifiedText from '../../components/ui/LinkifiedText';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
@@ -108,7 +109,7 @@ export default function ProductDetail() {
       }
     });
     return () => unsub();
-  }, [user, id]);
+  }, [user?.uid, id]);
 
   const toggleWishlist = async () => {
     if (!user) { showToast('Please log in', 'warning'); return; }
@@ -181,7 +182,7 @@ export default function ProductDetail() {
           unreadBy: arrayUnion(product.sellerId),
           updatedAt: serverTimestamp(),
         });
-        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: interestMessage, link: `/chat/${roomId}` });
+        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: interestMessage, link: `/messages/${roomId}` });
         showToast('Message sent in your existing chat!', 'success');
       } else if (!productSnapshot.empty) {
         // Already have a product-specific room for this listing — just navigate there
@@ -200,10 +201,10 @@ export default function ProductDetail() {
           updatedAt: serverTimestamp(),
         });
         roomId = newRoom.id;
-        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: inquiryMessage, link: `/chat/${roomId}` });
+        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: inquiryMessage, link: `/messages/${roomId}` });
       }
 
-      navigate(`/chat/${roomId}`, { state: { otherUser: { id: product.sellerId, name: product.sellerName, school: product.sellerSchool } } });
+      navigate(`/messages/${roomId}`, { state: { otherUser: { id: product.sellerId, name: product.sellerName, school: product.sellerSchool } } });
     } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'chatRooms'); }
     finally { setIsStartingChat(false); }
   };
@@ -301,19 +302,34 @@ export default function ProductDetail() {
             )}
             
             <div className="w-full h-full relative overflow-hidden rounded-xl bg-luxury-ink/5">
-              <AnimatePresence mode="wait">
-                <motion.img
-                  key={activeImgIdx}
-                  src={productImages[activeImgIdx]}
-                  alt={`${product.title} - Image ${activeImgIdx + 1}`}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="w-full h-full object-cover rounded-xl"
-                  referrerPolicy="no-referrer"
-                />
-              </AnimatePresence>
+              <motion.div
+                className="flex w-full h-full"
+                drag={productImages.length > 1 ? "x" : false}
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.2}
+                onDragEnd={(e, { offset }) => {
+                  const swipe = offset.x;
+                  if (swipe < -50 && activeImgIdx < productImages.length - 1) {
+                    setActiveImgIdx(prev => prev + 1);
+                  } else if (swipe > 50 && activeImgIdx > 0) {
+                    setActiveImgIdx(prev => prev - 1);
+                  }
+                }}
+                animate={{ x: `-${activeImgIdx * 100}%` }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              >
+                {productImages.map((img, idx) => (
+                  <div key={idx} className="w-full h-full shrink-0">
+                    <img 
+                      src={img} 
+                      alt={`${product.title} - Image ${idx + 1}`}
+                      className="w-full h-full object-cover rounded-xl pointer-events-none"
+                      referrerPolicy="no-referrer"
+                      draggable={false}
+                    />
+                  </div>
+                ))}
+              </motion.div>
 
               {productImages.length > 1 && (
                 <>
@@ -457,7 +473,7 @@ export default function ProductDetail() {
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <p className="text-lg font-bold text-luxury-ink group-hover:text-brand-teal transition-colors">{product.sellerName}</p>
-                  <ShieldCheck size={14} className="text-brand-teal" />
+                  <ShieldCheck size={14} className="text-brand-teal" title="Verified" />
                 </div>
                 <p className="text-sm text-luxury-ink/50 font-medium flex items-center gap-1 mt-1">
                   {product.sellerSchool} 
@@ -487,7 +503,7 @@ export default function ProductDetail() {
                     </div>
                   </div>
                 </div>
-                {r.comment && <p className="text-luxury-ink/60 text-sm leading-relaxed">{r.comment}</p>}
+                {r.comment && <LinkifiedText text={r.comment} className="text-luxury-ink/60 text-sm leading-relaxed block" />}
               </div>
             ))}
           </div>
@@ -497,7 +513,7 @@ export default function ProductDetail() {
       {/* Review Modal */}
       <AnimatePresence>
         {showReviewModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-luxury-ink/20 backdrop-blur-sm">
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="bg-surface-card rounded-2xl w-full max-w-md p-8 relative shadow-2xl border border-luxury-ink/5">
               <button onClick={() => setShowReviewModal(false)} className="absolute top-4 right-4 p-2 text-luxury-ink/40 hover:text-luxury-ink"><X size={20} /></button>
               <h3 className="text-xl font-bold text-luxury-ink mb-2">Rate this Transaction</h3>

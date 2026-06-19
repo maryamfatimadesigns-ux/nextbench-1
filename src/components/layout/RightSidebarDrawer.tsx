@@ -17,7 +17,7 @@ export default function RightSidebarDrawer() {
         onClick={() => setOpen(true)}
         className={`fixed z-40 lg:hidden w-11 h-11 rounded-full bg-brand-teal text-white shadow-lg flex items-center justify-center active:scale-95 transition-all duration-300 ${
           hasPlusButton 
-            ? 'bottom-24 right-4 max-sm:bottom-[168px] max-sm:right-[22px]' 
+            ? 'bottom-24 right-4 max-sm:bottom-42 max-sm:right-5.5' 
             : 'bottom-24 right-4'
         }`}
         aria-label="Open trending panel"
@@ -48,15 +48,14 @@ export default function RightSidebarDrawer() {
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
               drag="x"
-              dragDirectionLock
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={{ left: 0, right: 0.5 }}
+              dragConstraints={{ left: 0, right: 400 }}
+              dragElastic={{ left: 0, right: 1 }}
               onDragEnd={(e, { offset, velocity }) => {
-                if (offset.x > 100 || velocity.x > 300) {
+                if (offset.x > 50 || velocity.x > 100) {
                   setOpen(false);
                 }
               }}
-              className="fixed top-0 right-0 bottom-0 z-50 w-300px lg:hidden overflow-y-auto no-scrollbar"
+              className="fixed top-0 right-0 bottom-0 z-50 w-[70vw] sm:w-85 lg:hidden overflow-y-auto no-scrollbar shadow-2xl"
               style={{ background: 'var(--color-surface-card)', borderLeft: '1px solid var(--color-border)', touchAction: 'pan-y' }}
             >
               {/* Header */}
