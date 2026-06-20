@@ -2170,15 +2170,15 @@ export default function Feed() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center px-8"
+                    className="absolute inset-0 z-50 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center px-8"
                   >
                     {uploadProgress ? (
                       /* Progress bar mode — shown during file uploads */
                       <div className="w-full max-w-xs flex flex-col items-center gap-3">
-                        <p className="text-luxury-ink font-bold text-lg">{submittingStatus}</p>
+                        <p className="text-white font-bold text-lg">{submittingStatus}</p>
 
                         {/* Track + filled bar */}
-                        <div className="w-full h-2 rounded-full bg-luxury-ink/10 overflow-hidden">
+                        <div className="w-full h-2 rounded-full bg-white/20 overflow-hidden">
                           <motion.div
                             className="h-full rounded-full bg-brand-teal"
                             initial={{ width: 0 }}
@@ -2188,7 +2188,7 @@ export default function Feed() {
                         </div>
 
                         {/* Bytes done / left */}
-                        <div className="flex w-full justify-between text-[12px] text-luxury-ink/50 font-medium">
+                        <div className="flex w-full justify-between text-[12px] text-white/50 font-medium">
                           <span>{formatBytes(uploadProgress.loaded)} done</span>
                           <span className="font-bold text-brand-teal">{uploadProgress.pct}%</span>
                           <span>{formatBytes(uploadProgress.total - uploadProgress.loaded)} left</span>
@@ -2198,8 +2198,8 @@ export default function Feed() {
                       /* Spinner mode — shown for non-upload steps */
                       <>
                         <div className="w-12 h-12 border-4 border-brand-teal border-t-transparent rounded-full animate-spin mb-4" />
-                        <p className="text-luxury-ink font-bold text-lg">{submittingStatus}</p>
-                        <p className="text-luxury-ink/50 text-sm mt-1">
+                        <p className="text-white font-bold text-lg">{submittingStatus}</p>
+                        <p className="text-white/50 text-sm mt-1">
                           {submittingStatus === 'Scanning images for safety...'
                             ? 'AI is checking your images — this only takes a moment'
                             : 'Uploading media and publishing to community'}
