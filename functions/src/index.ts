@@ -508,8 +508,8 @@ export const submitInviteCode = onCall({ invoker: "public", cors: true }, async 
 // ─── EMAIL NOTIFICATION SYSTEM ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const APP_URL = "https://nextbench.app";
-const FROM_ADDRESS = '"Nextbench" <noreply@nextbench.app>';
+const APP_URL = "https://www.nextbench.in";
+const FROM_ADDRESS = '"Nextbench" <hello@nextbench.in>';
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between emails per user
 const DAILY_LIMIT_MS = 22 * 60 * 60 * 1000; // 22 hours (daily cap)
 
@@ -879,7 +879,7 @@ export const sendWeeklyDigest = onSchedule(
 // ─── Email #4: Admin Broadcast ─────────────────────────────────────────────────
 
 export const broadcastEmail = onCall(
-  { secrets: [EMAIL_PASS], invoker: "public", cors: true },
+  { secrets: [EMAIL_PASS], invoker: "public", cors: true, timeoutSeconds: 540, memory: "512MiB" },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Must be logged in.");
@@ -951,7 +951,8 @@ export const broadcastEmail = onCall(
         await transporter.sendMail({ from: FROM_ADDRESS, to: user.email, subject, html: fullHtml });
         sent++;
         await new Promise((r) => setTimeout(r, 100)); // ~10 emails/sec
-      } catch {
+      } catch (err: any) {
+        console.error(`Failed to send broadcast email to ${user.email}:`, err);
         failed++;
       }
     }

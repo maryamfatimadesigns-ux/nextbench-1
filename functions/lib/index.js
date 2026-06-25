@@ -435,8 +435,8 @@ exports.submitInviteCode = (0, https_1.onCall)({ invoker: "public", cors: true }
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── EMAIL NOTIFICATION SYSTEM ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
-const APP_URL = "https://nextbench.app";
-const FROM_ADDRESS = '"Nextbench" <noreply@nextbench.app>';
+const APP_URL = "https://www.nextbench.in";
+const FROM_ADDRESS = '"Nextbench" <hello@nextbench.in>';
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between emails per user
 const DAILY_LIMIT_MS = 22 * 60 * 60 * 1000; // 22 hours (daily cap)
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
@@ -774,7 +774,7 @@ exports.sendWeeklyDigest = (0, scheduler_1.onSchedule)({ schedule: "every sunday
     });
 });
 // ─── Email #4: Admin Broadcast ─────────────────────────────────────────────────
-exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "public", cors: true }, async (request) => {
+exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "public", cors: true, timeoutSeconds: 540, memory: "512MiB" }, async (request) => {
     var _a, _b, _c;
     const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
     if (!uid)
@@ -839,7 +839,8 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
             sent++;
             await new Promise((r) => setTimeout(r, 100)); // ~10 emails/sec
         }
-        catch (_d) {
+        catch (err) {
+            console.error(`Failed to send broadcast email to ${user.email}:`, err);
             failed++;
         }
     }
