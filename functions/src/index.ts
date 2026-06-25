@@ -114,10 +114,10 @@ function generateOtp(): string {
 // ─── Email Sending ────────────────────────────────────────────────────────────
 async function sendOtpEmail(to: string, otp: string, emailUser: string, emailPass: string): Promise<void> {
   const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
-    auth: { user: emailUser, pass: emailPass },
+    host: "smtp.resend.com",
+    port: 465,
+    secure: true,
+    auth: { user: "resend", pass: emailPass },
   });
 
   const html = `
