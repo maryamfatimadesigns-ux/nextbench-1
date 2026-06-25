@@ -261,7 +261,6 @@ export const verifyAuthOtpEmail = onCall(
     const tokenRef = db.collection("emailOtpTokens").doc(emailHash);
 
     // Load and validate token doc inside a transaction to prevent race conditions
-    let customToken: string;
     let isNewUser = false;
 
     await db.runTransaction(async (tx) => {
@@ -382,9 +381,12 @@ export const verifyAuthOtpEmail = onCall(
       }
     }
 
-    // Create custom token for client-side signInWithCustomToken
-    customToken = await admin.auth().createCustomToken(uid);
-    return { customToken, isNewUser };
+    // Bypass createCustomToken by setting a strong random password 
+    // and letting the client log in via Email/Password. This avoids IAM signBlob permission issues.
+    const loginPassword = crypto.randomBytes(32).toString("hex");
+    await admin.auth().updateUser(uid, { password: loginPassword });
+
+    return { loginPassword, email: rawEmail, isNewUser };
   }
 );
 

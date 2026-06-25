@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.applyReferral = exports.generateReferralCode = exports.verifyEmailOTP = exports.sendEmailOTP = void 0;
+exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const admin = __importStar(require("firebase-admin"));
@@ -142,10 +142,10 @@ function generateOtp() {
 // ─── Email Sending ────────────────────────────────────────────────────────────
 async function sendOtpEmail(to, otp, emailUser, emailPass) {
     const transporter = nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        auth: { user: emailUser, pass: emailPass },
+        host: "smtp.resend.com",
+        port: 465,
+        secure: true,
+        auth: { user: "resend", pass: emailPass },
     });
     const html = `
 <!DOCTYPE html>
@@ -190,8 +190,8 @@ async function sendOtpEmail(to, otp, emailUser, emailPass) {
         text: `Your Nextbench verification code is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
     });
 }
-// ─── Cloud Function: sendEmailOTP ─────────────────────────────────────────────
-exports.sendEmailOTP = (0, https_1.onCall)({ secrets: [EMAIL_USER, EMAIL_PASS, OTP_HMAC_SECRET] }, async (request) => {
+// ─── Cloud Function: sendAuthOtpEmail ─────────────────────────────────────────────
+exports.sendAuthOtpEmail = (0, https_1.onCall)({ secrets: [EMAIL_USER, EMAIL_PASS, OTP_HMAC_SECRET], invoker: "public" }, async (request) => {
     var _a;
     const rawEmail = (((_a = request.data) === null || _a === void 0 ? void 0 : _a.email) || "").toString().trim().toLowerCase();
     // 1. Validate email
@@ -250,8 +250,8 @@ exports.sendEmailOTP = (0, https_1.onCall)({ secrets: [EMAIL_USER, EMAIL_PASS, O
     }
     return { success: true };
 });
-// ─── Cloud Function: verifyEmailOTP ──────────────────────────────────────────
-exports.verifyEmailOTP = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET] }, async (request) => {
+// ─── Cloud Function: verifyAuthOtpEmail ──────────────────────────────────────────
+exports.verifyAuthOtpEmail = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET], invoker: "public" }, async (request) => {
     var _a, _b, _c, _d, _e;
     const rawEmail = (((_a = request.data) === null || _a === void 0 ? void 0 : _a.email) || "").toString().trim().toLowerCase();
     const rawOtp = (((_b = request.data) === null || _b === void 0 ? void 0 : _b.otp) || "").toString().trim();
@@ -268,7 +268,6 @@ exports.verifyEmailOTP = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET] }, asy
     const emailHash = hashEmail(rawEmail, secret);
     const tokenRef = db.collection("emailOtpTokens").doc(emailHash);
     // Load and validate token doc inside a transaction to prevent race conditions
-    let customToken;
     let isNewUser = false;
     await db.runTransaction(async (tx) => {
         var _a, _b, _c;
@@ -373,9 +372,11 @@ exports.verifyEmailOTP = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET] }, asy
             throw err;
         }
     }
-    // Create custom token for client-side signInWithCustomToken
-    customToken = await admin.auth().createCustomToken(uid);
-    return { customToken, isNewUser };
+    // Bypass createCustomToken by setting a strong random password 
+    // and letting the client log in via Email/Password. This avoids IAM signBlob permission issues.
+    const loginPassword = crypto.randomBytes(32).toString("hex");
+    await admin.auth().updateUser(uid, { password: loginPassword });
+    return { loginPassword, email: rawEmail, isNewUser };
 });
 // ─── Existing: generateReferralCode ──────────────────────────────────────────
 function generateRandomCode(length) {
@@ -386,7 +387,7 @@ function generateRandomCode(length) {
     }
     return result;
 }
-exports.generateReferralCode = (0, https_1.onCall)(async (request) => {
+exports.createInviteCode = (0, https_1.onCall)(async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "User must be logged in.");
     }
@@ -418,8 +419,8 @@ exports.generateReferralCode = (0, https_1.onCall)(async (request) => {
         return { code: uniqueCode };
     });
 });
-// ─── Existing: applyReferral ──────────────────────────────────────────────────
-exports.applyReferral = (0, https_1.onCall)(async (request) => {
+// ─── Existing: submitInviteCode ──────────────────────────────────────────────────
+exports.submitInviteCode = (0, https_1.onCall)(async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "User must be logged in.");
     }
