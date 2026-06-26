@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw } from 'lucide-react';
+import { useVideoPrefs } from '../../lib/VideoPrefsContext';
 
 interface VideoPlayerProps {
   src: string;
@@ -27,8 +28,9 @@ export default function VideoPlayer({ src, className = '' }: VideoPlayerProps) {
   // Unique ID for this player so it can ignore its own unmute broadcast
   const playerIdRef = useRef(`vp-${Math.random().toString(36).slice(2)}`);
 
+  const { globalMuted, setGlobalMuted } = useVideoPrefs();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(globalMuted);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
@@ -185,6 +187,14 @@ export default function VideoPlayer({ src, className = '' }: VideoPlayerProps) {
       );
     }
   };
+
+  // Sync whenever another video player changes the global mute preference
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = globalMuted;
+    setIsMuted(globalMuted);
+  }, [globalMuted]);
 
   const toggleFullscreen = (e: React.MouseEvent) => {
     e.stopPropagation();
