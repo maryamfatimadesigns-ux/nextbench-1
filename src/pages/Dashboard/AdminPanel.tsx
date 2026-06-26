@@ -38,7 +38,7 @@ export default function AdminPanel() {
   const [emailConfirmText, setEmailConfirmText] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<{ sent: number; failed: number } | null>(null);
-  const { userData, loading } = useAuth();
+  const { user, userData, loading } = useAuth();
   const { showToast } = useToast();
 
   // Fetch stats
@@ -771,7 +771,7 @@ export default function AdminPanel() {
                     try {
                       const functions = getFunctions();
                       const broadcastFn = httpsCallable(functions, 'broadcastEmail');
-                      const broadcastId = `broadcast_${Date.now()}_${userData?.uid || 'admin'}`;
+                      const broadcastId = `broadcast_${Date.now()}_${user?.uid || 'admin'}`;
                       const result: any = await broadcastFn({ subject: emailSubject, bodyHtml: emailBodyHtml, broadcastId });
                       setEmailResult({ sent: result.data.sent, failed: result.data.failed });
                     } catch (err: any) {
