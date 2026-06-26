@@ -23,25 +23,17 @@ const firestoreDbId = import.meta.env.VITE_FIREBASE_FIRESTORE_DB || '(default)';
 
 const app = initializeApp(firebaseConfig);
 
-// Enable persistent local cache — data survives page refreshes and tab switches.
-// This eliminates cold-start latency: the app renders from cache instantly while
-// syncing with the server in the background.
-//
-// IMPORTANT: iOS Safari (private browsing, WKWebView, older versions) may block
-// IndexedDB access which causes persistentMultipleTabManager to throw.
-// We gracefully fall back to memory-only cache so the app still works.
+// Use memory cache by default for instant startup — no IndexedDB blocking.
+// IndexedDB initialization (persistentLocalCache) can take 5-20 seconds on
+// first visit, slow devices, or Safari private mode, causing the white screen.
 function createFirestore() {
   try {
     return initializeFirestore(app, {
-      // Using persistentSingleTabManager (default) is much more stable than multiple tab manager
-      // and prevents the "Unexpected state (ID: b815)" corruption errors in production.
-      localCache: persistentLocalCache(),
-    }, firestoreDbId);
-  } catch (e) {
-    console.warn('[Firebase] Persistent cache unavailable, falling back to memory cache:', e);
-    return initializeFirestore(app, {
       localCache: memoryLocalCache(),
     }, firestoreDbId);
+  } catch (e) {
+    console.warn('[Firebase] Firestore initialization failed:', e);
+    return initializeFirestore(app, { localCache: memoryLocalCache() }, firestoreDbId);
   }
 }
 

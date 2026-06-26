@@ -9,7 +9,8 @@ import { VideoPrefsProvider } from './lib/VideoPrefsContext';
 import { HelmetProvider } from 'react-helmet-async';
 import './index.css';
 
-createRoot(document.getElementById('root')!).render(
+const root = createRoot(document.getElementById('root')!);
+root.render(
   <StrictMode>
     <BrowserRouter>
       <HelmetProvider>
@@ -26,3 +27,8 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+// Dismiss the HTML loading screen now that React has mounted
+if (typeof window.__hideAppLoading === 'function') {
+  window.__hideAppLoading();
+}

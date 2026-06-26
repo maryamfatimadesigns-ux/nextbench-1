@@ -122,16 +122,21 @@ function PostCardSkeleton() {
 // ─── Infinite Scroll Sentinel ──────────────────────────────
 function InfiniteScrollSentinel({ onVisible }: { onVisible: () => void }) {
   const ref = React.useRef<HTMLDivElement>(null);
+  // Store callback in a ref so the IntersectionObserver never needs to be
+  // reconnected when the parent component re-renders with a new function reference.
+  const callbackRef = React.useRef(onVisible);
+  React.useEffect(() => { callbackRef.current = onVisible; }, [onVisible]);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) onVisible(); },
-      { rootMargin: '200px' }
+      (entries) => { if (entries[0].isIntersecting) callbackRef.current(); },
+      { rootMargin: '600px' }  // Fire 600px before sentinel enters viewport
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [onVisible]);
+  }, []); // Stable — never re-connects
 
   return (
     <div ref={ref} className="flex flex-col w-full min-w-0">
@@ -956,7 +961,7 @@ export default function Feed() {
           collection(db, 'posts'),
           where('status', '==', 'approved'),
           orderBy('createdAt', 'desc'),
-          limit(10)
+          limit(20)
         );
         const snapshot = await getDocs(q);
         const userCache: Record<string, any> = {};
@@ -993,7 +998,7 @@ export default function Feed() {
         setRawPosts(fetchedPosts);
         const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
         setLastPostDoc(lastDoc);
-        setHasMorePosts(snapshot.docs.length === 10);
+        setHasMorePosts(snapshot.docs.length === 20);
       } catch (err) {
         console.error('Error fetching posts:', err);
       } finally {
@@ -1045,7 +1050,7 @@ export default function Feed() {
           collection(db, 'products'),
           where('status', 'in', ['available', 'sold']),
           orderBy('createdAt', 'desc'),
-          limit(5)
+          limit(10)
         );
         const sellerCache: Record<string, any> = {};
         const snapshot = await getDocs(q);
@@ -1081,7 +1086,7 @@ export default function Feed() {
         setProducts(fetchedProducts);
         const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
         setLastProductDoc(lastDoc);
-        setHasMoreProducts(snapshot.docs.length === 5);
+        setHasMoreProducts(snapshot.docs.length === 10);
       } catch (err) {
         console.error('Error fetching products:', err);
       }
@@ -1103,7 +1108,7 @@ export default function Feed() {
           where('status', '==', 'approved'),
           orderBy('createdAt', 'desc'),
           startAfter(lastPostDoc),
-          limit(10)
+          limit(20)
         );
         const snapshot = await getDocs(q);
         const userCache: Record<string, any> = {};
@@ -1133,7 +1138,7 @@ export default function Feed() {
         setRawPosts(prev => [...prev, ...newPosts]);
         const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
         setLastPostDoc(lastDoc);
-        setHasMorePosts(snapshot.docs.length === 10);
+        setHasMorePosts(snapshot.docs.length === 20);
       }
 
       // Load next 5 products
@@ -1143,7 +1148,7 @@ export default function Feed() {
           where('status', 'in', ['available', 'sold']),
           orderBy('createdAt', 'desc'),
           startAfter(lastProductDoc),
-          limit(5)
+          limit(10)
         );
         const snapshot = await getDocs(q);
         const sellerCache: Record<string, any> = {};
@@ -1172,7 +1177,7 @@ export default function Feed() {
         setProducts(prev => [...prev, ...newProducts]);
         const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
         setLastProductDoc(lastDoc);
-        setHasMoreProducts(snapshot.docs.length === 5);
+        setHasMoreProducts(snapshot.docs.length === 10);
       }
     } catch (err) {
       console.error('Error loading more feed items:', err);
