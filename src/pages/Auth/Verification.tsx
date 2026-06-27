@@ -140,9 +140,13 @@ export default function Verification() {
         });
 
         // Trigger automated verification API endpoint
+        const token = await user.getIdToken();
         const response = await fetch('/api/verify', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({
             uid: user.uid,
             profileName: userData?.name || user.displayName || '',

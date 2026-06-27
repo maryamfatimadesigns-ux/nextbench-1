@@ -3,7 +3,10 @@ import admin from 'firebase-admin';
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
-    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || 'nextbench-a11ed';
+    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
+    if (!projectId) {
+      throw new Error('FIREBASE_PROJECT_ID or VITE_FIREBASE_PROJECT_ID environment variable is missing.');
+    }
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
@@ -96,12 +99,19 @@ async function fetchWithRetry(url: string, options: any, retries = 3, delay = 10
 
 export default async function handler(req: any, res: any) {
   // CORS Headers
+  const origin = req.headers.origin;
+  if (origin) {
+    const isAllowed = origin === 'https://nextbench.in' || 
+                     (process.env.NODE_ENV !== 'production' && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')));
+    if (isAllowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+  }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
   );
 
   if (req.method === 'OPTIONS') {
@@ -112,7 +122,26 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Verify Bearer Token (Authentication)
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid authorization token' });
+  }
+  const idToken = authHeader.split('Bearer ')[1];
+  let decodedToken;
+  try {
+    decodedToken = await admin.auth().verifyIdToken(idToken);
+  } catch (error: any) {
+    console.error('Token verification failed:', error.message);
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  }
+
+  const verifiedUid = decodedToken.uid;
   const { uid, profileName, schoolName, idCardUrl, selfieUrl } = req.body;
+
+  if (verifiedUid !== uid) {
+    return res.status(403).json({ error: 'Forbidden: Cannot request verification for another user' });
+  }
 
   if (!uid || !profileName || !schoolName || !idCardUrl || !selfieUrl) {
     return res.status(400).json({ error: 'Missing required parameters (uid, profileName, schoolName, idCardUrl, selfieUrl)' });
@@ -121,6 +150,44 @@ export default async function handler(req: any, res: any) {
   if (!db) {
     console.error('Firestore admin DB not initialized');
     return res.status(500).json({ error: 'Database service is unavailable' });
+  }
+
+  // Rate Limiting (max 3 verification attempts/hour per user)
+  const rateLimitRef = db.collection('rate_limits').doc(`verify_${verifiedUid}`);
+  const now = Date.now();
+  const oneHourAgo = now - 3600000;
+
+  try {
+    await db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(rateLimitRef);
+      if (!doc.exists) {
+        transaction.set(rateLimitRef, {
+          count: 1,
+          windowStart: now,
+        });
+      } else {
+        const data = doc.data();
+        if (!data || data.windowStart < oneHourAgo) {
+          // Reset window
+          transaction.update(rateLimitRef, {
+            count: 1,
+            windowStart: now,
+          });
+        } else {
+          if (data.count >= 3) {
+            throw new Error('RATE_LIMIT_EXCEEDED');
+          }
+          transaction.update(rateLimitRef, {
+            count: data.count + 1,
+          });
+        }
+      }
+    });
+  } catch (err: any) {
+    if (err.message === 'RATE_LIMIT_EXCEEDED') {
+      return res.status(429).json({ error: 'Too many verification attempts. Limit is 3 per hour.' });
+    }
+    console.error('Rate limiting error:', err);
   }
 
   // Soft-fail fallback if no API keys are configured at all
