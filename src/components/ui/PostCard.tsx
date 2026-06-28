@@ -82,7 +82,9 @@ function timeAgo(date: any): string {
 export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onClick, onUpvote, onDownvote, onShare, onSave }: PostCardProps) {
   const { showToast } = useToast();
 
-  // Fetch live profile picture from Firestore — covers cases where pic was set after posting
+  // The feed's batch user resolver pre-populates authorProfilePicture for all posts,
+  // so this fallback getDoc almost never fires in normal usage. It only activates
+  // for posts that arrive via direct URL or without an author cache hit.
   const [liveProfilePicture, setLiveProfilePicture] = useState<string | undefined>(
     post.authorProfilePicture
   );
@@ -99,6 +101,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
     };
     fetchProfilePic();
   }, [post.authorId, post.authorProfilePicture, post.isAnonymous]);
+
 
   const postImageUrls = post.imageUrls && post.imageUrls.length > 0
     ? post.imageUrls

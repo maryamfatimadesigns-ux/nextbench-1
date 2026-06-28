@@ -179,17 +179,11 @@ function Comment({ reply, repliesMap, onReply, onDeleteReply, onEditReply, onUpv
     setIsEditing(false);
   };
 
-  // Show stored pic immediately; fall back to live Firestore fetch if missing
-  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(reply.authorProfilePicture);
-  useEffect(() => {
-    if (reply.authorProfilePicture || !reply.authorId) return;
-    getDoc(doc(db, 'users', reply.authorId)).then(snap => {
-      if (snap.exists()) {
-        const pic = snap.data()?.profilePicture;
-        if (pic) setAvatarUrl(pic);
-      }
-    }).catch(() => {});
-  }, [reply.authorId, reply.authorProfilePicture]);
+  // Avatar URL — populated by the parent onSnapshot handler which batch-resolves
+  // all missing avatars in a single query before calling setReplies().
+  // The individual getDoc fallback has been removed to eliminate N+1 Firestore reads.
+  const [avatarUrl] = useState<string | undefined>(reply.authorProfilePicture);
+
 
   return (
     <div className={`mt-4 ${level > 0 ? 'ml-4 md:ml-6 border-l-2 border-brand-teal/20 pl-4 md:pl-6' : ''}`}>
@@ -1389,14 +1383,49 @@ export default function Feed() {
   useEffect(() => {
     if (!selectedPost) return;
     const q = query(collection(db, 'post_replies'), where('postId', '==', selectedPost.id));
-    const unsub = onSnapshot(q, snap => {
+    const unsub = onSnapshot(q, async (snap) => {
       const reps: any[] = [];
       snap.forEach(d => reps.push({ id: d.id, ...d.data() }));
       reps.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
+
+      // ─── Batch-resolve missing author profile pictures (eliminates N+1 getDoc) ───
+      // Collect all unique authorIds that are missing a profilePicture in the reply data.
+      const missingAvatarIds = Array.from(new Set(
+        reps
+          .filter(r => r.authorId && !r.authorProfilePicture && !r.isAnonymous)
+          .map(r => r.authorId as string)
+      ));
+
+      if (missingAvatarIds.length > 0) {
+        // Firestore 'in' queries are capped at 30 elements per batch.
+        const avatarMap: Record<string, string> = {};
+        for (let i = 0; i < missingAvatarIds.length; i += 30) {
+          const batch = missingAvatarIds.slice(i, i + 30);
+          try {
+            const batchSnap = await getDocs(
+              query(collection(db, 'users'), where(documentId(), 'in', batch))
+            );
+            batchSnap.forEach(uDoc => {
+              const pic = uDoc.data()?.profilePicture;
+              if (pic) avatarMap[uDoc.id] = pic;
+            });
+          } catch {
+            // Non-critical: Comment component still shows initials as fallback.
+          }
+        }
+        // Enrich replies with resolved avatars so Comment components never need getDoc.
+        reps.forEach(r => {
+          if (r.authorId && avatarMap[r.authorId]) {
+            r.authorProfilePicture = avatarMap[r.authorId];
+          }
+        });
+      }
+
       setReplies(reps);
     });
     return () => unsub();
   }, [selectedPost]);
+
 
   useEffect(() => {
     if (!user) return;
