@@ -884,8 +884,9 @@ export const broadcastEmail = onCall(
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Must be logged in.");
 
-    const adminSnap = await db.collection("users").doc(uid).get();
-    if (!adminSnap.data()?.isAdmin) throw new HttpsError("permission-denied", "Admins only.");
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Admins only.");
+    }
 
     const { subject, bodyHtml, broadcastId } = request.data as {
       subject: string;
@@ -1097,6 +1098,27 @@ export const moderateReply = onDocumentCreated(
         moderationReason: moderation.reason,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
+    }
+  }
+);
+
+export const onUserUpdated = onDocumentUpdated(
+  { document: "users/{userId}" },
+  async (event) => {
+    const change = event.data;
+    if (!change) return;
+
+    const before = change.before.data();
+    const after = change.after.data();
+    const uid = event.params.userId;
+
+    const beforeAdmin = before?.isAdmin === true;
+    const afterAdmin = after?.isAdmin === true;
+
+    // If admin status changed, sync to custom claims
+    if (beforeAdmin !== afterAdmin) {
+      console.log(`Syncing admin custom claim for user ${uid} to ${afterAdmin}`);
+      await admin.auth().setCustomUserClaims(uid, { admin: afterAdmin });
     }
   }
 );

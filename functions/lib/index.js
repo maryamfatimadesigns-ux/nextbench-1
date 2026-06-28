@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
+exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -775,13 +775,13 @@ exports.sendWeeklyDigest = (0, scheduler_1.onSchedule)({ schedule: "every sunday
 });
 // ─── Email #4: Admin Broadcast ─────────────────────────────────────────────────
 exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "public", cors: true, timeoutSeconds: 540, memory: "512MiB" }, async (request) => {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
     if (!uid)
         throw new https_1.HttpsError("unauthenticated", "Must be logged in.");
-    const adminSnap = await db.collection("users").doc(uid).get();
-    if (!((_b = adminSnap.data()) === null || _b === void 0 ? void 0 : _b.isAdmin))
+    if (((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) !== true) {
         throw new https_1.HttpsError("permission-denied", "Admins only.");
+    }
     const { subject, bodyHtml, broadcastId } = request.data;
     if (!subject || !bodyHtml)
         throw new https_1.HttpsError("invalid-argument", "subject and bodyHtml are required.");
@@ -800,7 +800,7 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
         const user = userDoc.data();
         if (!user.email || user.emailOptOut === true)
             continue;
-        const firstName = ((_c = user.name) === null || _c === void 0 ? void 0 : _c.split(" ")[0]) || "there";
+        const firstName = ((_d = user.name) === null || _d === void 0 ? void 0 : _d.split(" ")[0]) || "there";
         const unsubscribeUrl = `${APP_URL}/unsubscribe?uid=${userDoc.id}`;
         const fullHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -966,6 +966,21 @@ exports.moderateReply = (0, firestore_1.onDocumentCreated)({ document: "post_rep
             moderationReason: moderation.reason,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+    }
+});
+exports.onUserUpdated = (0, firestore_1.onDocumentUpdated)({ document: "users/{userId}" }, async (event) => {
+    const change = event.data;
+    if (!change)
+        return;
+    const before = change.before.data();
+    const after = change.after.data();
+    const uid = event.params.userId;
+    const beforeAdmin = (before === null || before === void 0 ? void 0 : before.isAdmin) === true;
+    const afterAdmin = (after === null || after === void 0 ? void 0 : after.isAdmin) === true;
+    // If admin status changed, sync to custom claims
+    if (beforeAdmin !== afterAdmin) {
+        console.log(`Syncing admin custom claim for user ${uid} to ${afterAdmin}`);
+        await admin.auth().setCustomUserClaims(uid, { admin: afterAdmin });
     }
 });
 //# sourceMappingURL=index.js.map
