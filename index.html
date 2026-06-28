@@ -66,12 +66,45 @@
     <script>
       // Hide the loading screen once React has mounted
       window.__hideAppLoading = function() {
+        window.__appLoaded = true;
         var el = document.getElementById('app-loading');
         if (el) {
           el.classList.add('hidden');
           setTimeout(function() { el.remove(); }, 350);
         }
       };
+
+      // Robust error handling for PWA chunk failures and runtime crashes
+      window.addEventListener('error', function(e) {
+        // If the app successfully loaded already, let ErrorBoundary handle it
+        if (window.__appLoaded) return;
+
+        console.error('Initial load error:', e);
+
+        var el = document.getElementById('app-loading');
+        if (!el) return;
+
+        // If it's a script load error (e.g., 404 for an old chunk due to stale SW cache)
+        if (e.target && e.target.tagName === 'SCRIPT') {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              for (var i = 0; i < regs.length; i++) {
+                regs[i].unregister();
+              }
+              // Prevent infinite reload loops by checking session storage
+              if (!sessionStorage.getItem('sw_fallback_reloaded')) {
+                sessionStorage.setItem('sw_fallback_reloaded', 'true');
+                window.location.reload();
+              } else {
+                el.innerHTML = '<p style="color:white;font-family:sans-serif;padding:20px;text-align:center;">Failed to load app. Please clear your browser cache.</p>';
+              }
+            });
+          }
+        } else {
+          // Runtime error during module evaluation
+          el.innerHTML = '<p style="color:white;font-family:sans-serif;padding:20px;text-align:center;">An unexpected error occurred while loading. Please refresh.</p>';
+        }
+      }, true); // Use capture phase to catch script errors
     </script>
   </body>
 </html>
