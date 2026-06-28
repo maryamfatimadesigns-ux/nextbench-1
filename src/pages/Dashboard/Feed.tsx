@@ -387,6 +387,15 @@ function PostDetailModal({
 
   const [commentSort, setCommentSort] = useState<'recent' | 'top' | 'discussed'>('recent');
 
+  // Stable blob URL for reply image preview — avoids memory leak from inline createObjectURL
+  const replyImagePreviewUrl = useMemo(
+    () => (replyImageFile ? URL.createObjectURL(replyImageFile) : null),
+    [replyImageFile]
+  );
+  useEffect(() => {
+    return () => { if (replyImagePreviewUrl) URL.revokeObjectURL(replyImagePreviewUrl); };
+  }, [replyImagePreviewUrl]);
+
   const sortedRootReplies = useMemo(() => {
     const roots = repliesMap['root'] || [];
     if (commentSort === 'top') {
@@ -650,7 +659,8 @@ function PostDetailModal({
               ) : replyImageFile ? (
                 <div className="relative inline-block mb-3">
                   <div className="w-20 h-20 rounded-xl overflow-hidden border border-luxury-ink/10">
-                    <img src={URL.createObjectURL(replyImageFile)} alt="Preview" className="w-full h-full object-cover" />
+                    <img src={replyImagePreviewUrl!} alt="Preview" className="w-full h-full object-cover" />
+
                   </div>
                   <button
                     type="button"
@@ -898,8 +908,18 @@ export default function Feed() {
   // Lock body scroll when a modal is open
   useScrollLock(isModalOpen || !!selectedPost || cropImageSrc !== null);
 
-
   const [rawPosts, setRawPosts] = useState<Post[]>([]);
+
+  // Stable blob URLs for image-file previews in the post creation modal.
+  // useMemo creates each URL once per imageFiles change; useEffect revokes
+  // old URLs when imageFiles changes or the component unmounts.
+  const imageFilePreviewUrls = useMemo(
+    () => imageFiles.map(f => URL.createObjectURL(f)),
+    [imageFiles]
+  );
+  useEffect(() => {
+    return () => { imageFilePreviewUrls.forEach(u => URL.revokeObjectURL(u)); };
+  }, [imageFilePreviewUrls]);
 
   // ─── Pagination state ────────────────────────────────────
   const [lastPostDoc, setLastPostDoc] = useState<QueryDocumentSnapshot | null>(null);
@@ -2715,7 +2735,8 @@ export default function Feed() {
                         {imageFiles.map((file, index) => (
                           <div key={index} className="relative group shrink-0">
                             <div className="w-24 h-24 rounded-xl overflow-hidden border border-luxury-ink/10">
-                              <img src={URL.createObjectURL(file)} alt="Preview" className="w-full h-full object-cover" />
+                              <img src={imageFilePreviewUrls[index]} alt="Preview" className="w-full h-full object-cover" />
+
                             </div>
                             <button
                               type="button"
