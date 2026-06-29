@@ -101,7 +101,8 @@ export const POST_TYPES = [
 ];
 
 // ─── Post Card Skeleton ────────────────────────────────────
-function PostCardSkeleton() {
+// Memoized: it takes no props, so it never needs to re-render once mounted.
+const PostCardSkeleton = React.memo(function PostCardSkeleton() {
   return (
     <div className="p-4 sm:p-6 md:p-8 flex flex-col w-full border-b animate-pulse" style={{ borderColor: 'var(--color-border)' }}>
       {/* Avatar + meta row */}
@@ -129,7 +130,7 @@ function PostCardSkeleton() {
       </div>
     </div>
   );
-}
+});
 
 // ─── Infinite Scroll Sentinel ──────────────────────────────
 function InfiniteScrollSentinel({ onVisible }: { onVisible: () => void }) {
@@ -3181,7 +3182,9 @@ export default function Feed() {
   );
 }
 
-function HorizontalDiscoverClubs() {
+// Memoized: rendered inline in the feed; takes no props so it stays stable
+// across the frequent parent re-renders and only updates on its own hook state.
+const HorizontalDiscoverClubs = React.memo(function HorizontalDiscoverClubs() {
   const { user, userData } = useAuth();
   const { showToast } = useToast();
   const { clubs, loading } = usePublicClubs(userData?.school, userData?.city, user?.uid);
@@ -3248,4 +3251,4 @@ function HorizontalDiscoverClubs() {
       </div>
     </div>
   );
-}
+});
