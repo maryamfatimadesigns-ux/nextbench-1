@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useReducer, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3, ChevronLeft, ChevronRight, Paperclip, Film, Pencil } from 'lucide-react';
 import { collection, onSnapshot, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs, writeBatch, orderBy, limit, documentId, startAfter, QueryDocumentSnapshot } from 'firebase/firestore';
@@ -854,6 +854,59 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ─── Consolidated like / dislike / save interaction state ──────────────────
+// Replaces 4 separate Sets (upvoted/downvoted/saved post ids, upvoted reply
+// ids) and 3 lookup Maps (Firestore doc-id keyed by post/reply) with one
+// reducer. A single optimistic toggle (e.g. liking a post that was disliked)
+// becomes one atomic dispatch instead of several independent setState calls.
+interface InteractionState {
+  upvotedPostIds: Set<string>;
+  downvotedPostIds: Set<string>;
+  savedPostIds: Set<string>;
+  replyUpvotedIds: Set<string>;
+  upvoteMap: Record<string, string>;
+  downvoteMap: Record<string, string>;
+  replyUpvoteMap: Record<string, string>;
+}
+
+type InteractionAction =
+  | { type: 'SET_UPVOTES'; ids: Set<string>; map: Record<string, string> }
+  | { type: 'SET_DOWNVOTES'; ids: Set<string>; map: Record<string, string> }
+  | { type: 'SET_SAVES'; ids: Set<string> }
+  | { type: 'SET_REPLY_UPVOTES'; ids: Set<string>; map: Record<string, string> }
+  | { type: 'SET_MEMBER'; key: 'upvotedPostIds' | 'downvotedPostIds' | 'savedPostIds' | 'replyUpvotedIds'; id: string; present: boolean };
+
+const initialInteractionState: InteractionState = {
+  upvotedPostIds: new Set(),
+  downvotedPostIds: new Set(),
+  savedPostIds: new Set(),
+  replyUpvotedIds: new Set(),
+  upvoteMap: {},
+  downvoteMap: {},
+  replyUpvoteMap: {},
+};
+
+function interactionReducer(state: InteractionState, action: InteractionAction): InteractionState {
+  switch (action.type) {
+    case 'SET_UPVOTES':
+      return { ...state, upvotedPostIds: action.ids, upvoteMap: action.map };
+    case 'SET_DOWNVOTES':
+      return { ...state, downvotedPostIds: action.ids, downvoteMap: action.map };
+    case 'SET_SAVES':
+      return { ...state, savedPostIds: action.ids };
+    case 'SET_REPLY_UPVOTES':
+      return { ...state, replyUpvotedIds: action.ids, replyUpvoteMap: action.map };
+    case 'SET_MEMBER': {
+      const next = new Set(state[action.key]);
+      if (action.present) next.add(action.id);
+      else next.delete(action.id);
+      return { ...state, [action.key]: next };
+    }
+    default:
+      return state;
+  }
+}
+
 export default function Feed() {
   const [privacy, setPrivacy] = useState('public');
   const [showPostOptions, setShowPostOptions] = useState(false);
@@ -881,11 +934,9 @@ export default function Feed() {
   const blockedIds = useBlockedIds();
   const blockedByIds = useBlockedByIds();
 
-  const [upvotedPostIds, setUpvotedPostIds] = useState<Set<string>>(new Set());
-  const [upvoteMap, setUpvoteMap] = useState<Record<string, string>>({});
-  const [downvotedPostIds, setDownvotedPostIds] = useState<Set<string>>(new Set());
-  const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
-  const [downvoteMap, setDownvoteMap] = useState<Record<string, string>>({});
+  // Consolidated like/dislike/save state (see interactionReducer above).
+  const [interactionState, dispatchInteraction] = useReducer(interactionReducer, initialInteractionState);
+  const { upvotedPostIds, downvotedPostIds, savedPostIds, replyUpvotedIds, upvoteMap, downvoteMap, replyUpvoteMap } = interactionState;
 
   const [wishlisted, setWishlisted] = useState<Set<string>>(new Set());
   const [wishlistMap, setWishlistMap] = useState<Record<string, string>>({});
@@ -897,8 +948,6 @@ export default function Feed() {
   const [replyImageFile, setReplyImageFile] = useState<File | null>(null);
   const [isUploadingReplyImage, setIsUploadingReplyImage] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{id: string, name: string} | null>(null);
-  const [replyUpvotedIds, setReplyUpvotedIds] = useState<Set<string>>(new Set());
-  const [replyUpvoteMap, setReplyUpvoteMap] = useState<Record<string, string>>({});
   const [replyGifUrl, setReplyGifUrl] = useState<string | null>(null);
 
   // Confirm dialog state (replaces window.confirm everywhere in this component)
@@ -1311,8 +1360,7 @@ export default function Feed() {
           ids.add(d.data().postId);
           map[d.data().postId] = d.id;
         });
-        setUpvotedPostIds(ids);
-        setUpvoteMap(map);
+        dispatchInteraction({ type: 'SET_UPVOTES', ids, map });
       } catch (err) {
         console.error('Error fetching upvotes:', err);
       }
@@ -1333,8 +1381,7 @@ export default function Feed() {
           ids.add(d.data().postId);
           map[d.data().postId] = d.id;
         });
-        setDownvotedPostIds(ids);
-        setDownvoteMap(map);
+        dispatchInteraction({ type: 'SET_DOWNVOTES', ids, map });
       } catch (err) {
         console.error('Error fetching downvotes:', err);
       }
@@ -1352,7 +1399,7 @@ export default function Feed() {
         snap.forEach(d => {
           ids.add(d.data().postId);
         });
-        setSavedPostIds(ids);
+        dispatchInteraction({ type: 'SET_SAVES', ids });
       } catch (err) {
         console.error('Error fetching saves:', err);
       }
@@ -1372,8 +1419,7 @@ export default function Feed() {
           ids.add(d.data().replyId);
           map[d.data().replyId] = d.id;
         });
-        setReplyUpvotedIds(ids);
-        setReplyUpvoteMap(map);
+        dispatchInteraction({ type: 'SET_REPLY_UPVOTES', ids, map });
       } catch (err) {
         console.error('Error fetching reply upvotes:', err);
       }
@@ -1807,19 +1853,10 @@ export default function Feed() {
     const isDownvoted = downvotedPostIds.has(post.id);
 
     // Optimistic UI update
-    setUpvotedPostIds(prev => {
-      const next = new Set(prev);
-      if (isUpvoted) next.delete(post.id);
-      else next.add(post.id);
-      return next;
-    });
+    dispatchInteraction({ type: 'SET_MEMBER', key: 'upvotedPostIds', id: post.id, present: !isUpvoted });
 
     if (!isUpvoted && isDownvoted) {
-      setDownvotedPostIds(prev => {
-        const next = new Set(prev);
-        next.delete(post.id);
-        return next;
-      });
+      dispatchInteraction({ type: 'SET_MEMBER', key: 'downvotedPostIds', id: post.id, present: false });
     }
 
     setRawPosts(prev => prev.map(p => {
@@ -1872,18 +1909,9 @@ export default function Feed() {
       }
     } catch (e) {
       // Revert optimistic update
-      setUpvotedPostIds(prev => {
-        const next = new Set(prev);
-        if (isUpvoted) next.add(post.id);
-        else next.delete(post.id);
-        return next;
-      });
+      dispatchInteraction({ type: 'SET_MEMBER', key: 'upvotedPostIds', id: post.id, present: isUpvoted });
       if (!isUpvoted && isDownvoted) {
-        setDownvotedPostIds(prev => {
-          const next = new Set(prev);
-          next.add(post.id);
-          return next;
-        });
+        dispatchInteraction({ type: 'SET_MEMBER', key: 'downvotedPostIds', id: post.id, present: true });
       }
       setRawPosts(prev => prev.map(p => 
         p.id === post.id ? { ...p, upvotesCount: post.upvotesCount, downvotesCount: post.downvotesCount } : p
@@ -1909,19 +1937,10 @@ export default function Feed() {
     const isUpvoted = upvotedPostIds.has(post.id);
 
     // Optimistic UI update
-    setDownvotedPostIds(prev => {
-      const next = new Set(prev);
-      if (isDownvoted) next.delete(post.id);
-      else next.add(post.id);
-      return next;
-    });
+    dispatchInteraction({ type: 'SET_MEMBER', key: 'downvotedPostIds', id: post.id, present: !isDownvoted });
 
     if (!isDownvoted && isUpvoted) {
-      setUpvotedPostIds(prev => {
-        const next = new Set(prev);
-        next.delete(post.id);
-        return next;
-      });
+      dispatchInteraction({ type: 'SET_MEMBER', key: 'upvotedPostIds', id: post.id, present: false });
     }
 
     setRawPosts(prev => prev.map(p => {
@@ -1974,18 +1993,9 @@ export default function Feed() {
       }
     } catch (e) {
       // Revert optimistic update
-      setDownvotedPostIds(prev => {
-        const next = new Set(prev);
-        if (isDownvoted) next.add(post.id);
-        else next.delete(post.id);
-        return next;
-      });
+      dispatchInteraction({ type: 'SET_MEMBER', key: 'downvotedPostIds', id: post.id, present: isDownvoted });
       if (!isDownvoted && isUpvoted) {
-        setUpvotedPostIds(prev => {
-          const next = new Set(prev);
-          next.add(post.id);
-          return next;
-        });
+        dispatchInteraction({ type: 'SET_MEMBER', key: 'upvotedPostIds', id: post.id, present: true });
       }
       setRawPosts(prev => prev.map(p => 
         p.id === post.id ? { ...p, upvotesCount: post.upvotesCount, downvotesCount: post.downvotesCount } : p
@@ -2009,12 +2019,7 @@ export default function Feed() {
     const isUpvoted = replyUpvotedIds.has(replyId);
 
     // Optimistic UI update
-    setReplyUpvotedIds(prev => {
-      const next = new Set(prev);
-      if (isUpvoted) next.delete(replyId);
-      else next.add(replyId);
-      return next;
-    });
+    dispatchInteraction({ type: 'SET_MEMBER', key: 'replyUpvotedIds', id: replyId, present: !isUpvoted });
 
     try {
       const reply = replies.find(r => r.id === replyId);
@@ -2039,12 +2044,7 @@ export default function Feed() {
       }
     } catch (e) {
       // Revert optimistic update
-      setReplyUpvotedIds(prev => {
-        const next = new Set(prev);
-        if (isUpvoted) next.add(replyId);
-        else next.delete(replyId);
-        return next;
-      });
+      dispatchInteraction({ type: 'SET_MEMBER', key: 'replyUpvotedIds', id: replyId, present: isUpvoted });
       handleFirestoreError(e, OperationType.UPDATE, 'post_replies');
     }
   };
