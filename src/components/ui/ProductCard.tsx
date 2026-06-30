@@ -93,10 +93,10 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="group w-full"
     >
       <Link to={`/product/${product.id}`} className="block">
@@ -115,7 +115,7 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/profile/${product.sellerId}`); }}
               className="shrink-0 cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-full bg-surface-soft flex items-center justify-center text-brand-teal font-semibold text-sm overflow-hidden">
+              <div className="w-9 h-9 rounded-full bg-surface-soft flex items-center justify-center text-brand-teal font-semibold text-sm overflow-hidden ring-1 ring-inset ring-luxury-ink/[0.06]">
                 {product.sellerProfilePicture ? (
                   <img
                     src={getOptimizedImageUrl(product.sellerProfilePicture)}
@@ -145,7 +145,7 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
             </div>
           </div>
 
-          <h3 className="text-[15px] font-semibold text-luxury-ink mb-3 truncate">{product.title}</h3>
+          <h3 className="font-serif text-[17px] font-semibold text-luxury-ink mb-3 truncate">{product.title}</h3>
 
           <div
             className="aspect-4/3 overflow-hidden relative mb-4 rounded-xl group/carousel"
@@ -170,13 +170,13 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
                   onClick={prevImage}
                   className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover/carousel:opacity-100 transition-opacity z-20"
                 >
-                  <ChevronLeft size={18} strokeWidth={2.5} />
+                  <ChevronLeft size={18} strokeWidth={2} />
                 </button>
                 <button
                   onClick={nextImage}
                   className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full opacity-0 group-hover/carousel:opacity-100 transition-opacity z-20"
                 >
-                  <ChevronRight size={18} strokeWidth={2.5} />
+                  <ChevronRight size={18} strokeWidth={2} />
                 </button>
 
                 {/* Bottom dots indicator */}
@@ -208,7 +208,7 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
             {product.status === 'sold' && (
               <div className="absolute inset-0 flex items-center justify-center bg-luxury-ink/20 backdrop-blur-[1px] z-20">
                 <div className="flex items-center gap-2 bg-luxury-ink text-surface-base px-5 py-2 rounded-full text-[11px] font-bold uppercase tracking-[0.2em] shadow-lg">
-                  <Tag size={12} />
+                  <Tag size={12} strokeWidth={2} />
                   Sold
                 </div>
               </div>
@@ -224,6 +224,7 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
               >
                 <Heart
                   size={18}
+                  strokeWidth={1.75}
                   className={`transition-colors ${
                     isWishlisted ? 'text-brand-pink fill-brand-pink' : 'text-luxury-ink/40 hover:text-brand-pink'
                   }`}
@@ -234,14 +235,14 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs text-luxury-ink/40">
-              <MapPin size={14} /> {product.city || 'Lucknow'}
+              <MapPin size={14} strokeWidth={1.75} /> {product.city || 'Lucknow'}
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleShare}
                 className="p-2 text-luxury-ink/40 hover:text-brand-teal transition-colors rounded-lg hover:bg-surface-soft"
               >
-                <Share2 size={16} />
+                <Share2 size={16} strokeWidth={1.75} />
               </button>
               <button className={`px-4 py-2 text-white text-xs font-semibold shadow-sm transition-colors rounded-lg ${
                 product.status === 'sold'
