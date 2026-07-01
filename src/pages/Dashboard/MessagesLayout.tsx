@@ -251,7 +251,7 @@ export default function MessagesLayout() {
   const filteredChatRooms = chatRooms.filter((room) => {
     const otherUserId = room.participants.find(id => id !== user?.uid);
     if (!otherUserId) return true;
-    if (blockedIds.has(otherUserId) || blockedByIds.has(otherUserId)) return false;
+    if (allBlockedIds.has(otherUserId)) return false;
     if (chatSearchTerm.trim()) {
       return (room.otherUser?.name?.toLowerCase() || '').includes(chatSearchTerm.toLowerCase());
     }
