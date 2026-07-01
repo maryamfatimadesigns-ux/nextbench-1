@@ -990,10 +990,29 @@ export const broadcastEmail = onCall(
     if (!subject || !bodyHtml) throw new HttpsError("invalid-argument", "subject and bodyHtml are required.");
     if (subject.length > 200) throw new HttpsError("invalid-argument", "Subject too long.");
 
-    // Idempotency: prevent double sends
+    if (!broadcastId || typeof broadcastId !== "string") {
+      throw new HttpsError("invalid-argument", "broadcastId is required.");
+    }
+
+    // Idempotency: atomically CLAIM the broadcast BEFORE sending. create() fails
+    // if the doc already exists, so a timeout, crash, or client retry can never
+    // re-send to everyone who already received it. (Previously the guard doc was
+    // written only after the whole send loop, so any early exit re-spammed users.)
     const broadcastRef = db.collection("emailBroadcasts").doc(broadcastId);
-    const existing = await broadcastRef.get();
-    if (existing.exists) throw new HttpsError("already-exists", "This broadcast was already sent.");
+    try {
+      await broadcastRef.create({
+        subject,
+        sentBy: uid,
+        status: "in_progress",
+        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (err: any) {
+      // GRPC ALREADY_EXISTS === 6
+      if (err?.code === 6 || err?.code === "already-exists") {
+        throw new HttpsError("already-exists", "This broadcast was already sent.");
+      }
+      throw err;
+    }
 
     const usersSnap = await db.collection("users").limit(2000).get();
     const transporter = getTransporter(EMAIL_PASS.value());
@@ -1051,9 +1070,8 @@ export const broadcastEmail = onCall(
       }
     }
 
-    await broadcastRef.set({
-      subject,
-      sentBy: uid,
+    await broadcastRef.update({
+      status: "completed",
       sentAt: admin.firestore.FieldValue.serverTimestamp(),
       recipientCount: sent,
       failedCount: failed,
