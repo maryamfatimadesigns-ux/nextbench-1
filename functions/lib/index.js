@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.getLandingStats = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfile = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
+exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.deletePostCascade = exports.getLandingStats = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -45,8 +45,11 @@ function publicUserFromDoc(doc) {
         username: typeof data.username === "string" ? data.username : undefined,
         school: typeof data.school === "string" ? data.school : undefined,
         city: typeof data.city === "string" ? data.city : undefined,
+        about: typeof data.about === "string" ? data.about : null,
         profilePicture: typeof data.profilePicture === "string" ? data.profilePicture : null,
+        coverPhoto: typeof data.coverPhoto === "string" ? data.coverPhoto : null,
         verified: data.verified === true,
+        reputation: typeof data.reputation === "number" ? data.reputation : undefined,
         accountType: typeof data.accountType === "string" ? data.accountType : undefined,
         orgName: typeof data.orgName === "string" ? data.orgName : undefined,
     };
@@ -77,6 +80,18 @@ async function hasBlockRelationship(uid1, uid2) {
         db.collection("blocks").doc(`${uid2}_${uid1}`).get(),
     ]);
     return aBlocksB.exists || bBlocksA.exists;
+}
+async function deleteQueryDocs(queryRef) {
+    const snap = await queryRef.get();
+    let deleted = 0;
+    for (let i = 0; i < snap.docs.length; i += 450) {
+        const batch = db.batch();
+        const chunk = snap.docs.slice(i, i + 450);
+        chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
+        deleted += chunk.length;
+    }
+    return deleted;
 }
 function normalizeSearchTerm(value) {
     return typeof value === "string" ? value.trim().toLowerCase().slice(0, 80) : "";
@@ -865,11 +880,29 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
         throw new https_1.HttpsError("invalid-argument", "subject and bodyHtml are required.");
     if (subject.length > 200)
         throw new https_1.HttpsError("invalid-argument", "Subject too long.");
-    // Idempotency: prevent double sends
+    if (!broadcastId || typeof broadcastId !== "string") {
+        throw new https_1.HttpsError("invalid-argument", "broadcastId is required.");
+    }
+    // Idempotency: atomically CLAIM the broadcast BEFORE sending. create() fails
+    // if the doc already exists, so a timeout, crash, or client retry can never
+    // re-send to everyone who already received it. (Previously the guard doc was
+    // written only after the whole send loop, so any early exit re-spammed users.)
     const broadcastRef = db.collection("emailBroadcasts").doc(broadcastId);
-    const existing = await broadcastRef.get();
-    if (existing.exists)
-        throw new https_1.HttpsError("already-exists", "This broadcast was already sent.");
+    try {
+        await broadcastRef.create({
+            subject,
+            sentBy: uid,
+            status: "in_progress",
+            startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }
+    catch (err) {
+        // GRPC ALREADY_EXISTS === 6
+        if ((err === null || err === void 0 ? void 0 : err.code) === 6 || (err === null || err === void 0 ? void 0 : err.code) === "already-exists") {
+            throw new https_1.HttpsError("already-exists", "This broadcast was already sent.");
+        }
+        throw err;
+    }
     const usersSnap = await db.collection("users").limit(2000).get();
     const transporter = getTransporter(EMAIL_PASS.value());
     let sent = 0;
@@ -922,9 +955,8 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
             failed++;
         }
     }
-    await broadcastRef.set({
-        subject,
-        sentBy: uid,
+    await broadcastRef.update({
+        status: "completed",
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         recipientCount: sent,
         failedCount: failed,
@@ -1179,6 +1211,41 @@ exports.getPublicProfile = (0, https_1.onCall)({ invoker: "public", cors: true }
     const userDoc = await db.collection("users").doc(userId).get();
     return { user: publicUserFromDoc(userDoc) };
 });
+exports.getPublicProfileContent = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const userId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.userId) === "string" ? request.data.userId : "";
+    if (!userId)
+        throw new https_1.HttpsError("invalid-argument", "Missing userId.");
+    if (uid !== userId && await hasBlockRelationship(uid, userId)) {
+        return { user: null, posts: [], products: [] };
+    }
+    const [userDoc, blockedIds, friendIds, productSnap, postSnap] = await Promise.all([
+        db.collection("users").doc(userId).get(),
+        blockSetFor(uid),
+        friendSetFor(uid),
+        db.collection("products").where("sellerId", "==", userId).limit(120).get(),
+        db.collection("posts").where("authorId", "==", userId).limit(120).get(),
+    ]);
+    if (!userDoc.exists)
+        return { user: null, posts: [], products: [] };
+    const productDocs = productSnap.docs.filter((docSnap) => {
+        const data = docSnap.data();
+        if (uid === userId)
+            return true;
+        return !blockedIds.has(userId) && ["available", "sold"].includes(String(data.status || ""));
+    });
+    const postDocs = postSnap.docs.filter((docSnap) => {
+        const data = docSnap.data();
+        if (uid !== userId && data.isAnonymous === true)
+            return false;
+        return isVisiblePostData(data, uid, blockedIds, friendIds);
+    });
+    productDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+    postDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+    const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+    return { user: publicUserFromDoc(userDoc), posts, products };
+});
 exports.searchPublicUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
     var _a, _b, _c;
     const uid = assertAuthedUid(request);
@@ -1339,7 +1406,14 @@ exports.getPostReplies = (0, https_1.onCall)({ invoker: "public", cors: true }, 
     const postId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.postId) === "string" ? request.data.postId : "";
     if (!postId)
         throw new https_1.HttpsError("invalid-argument", "Missing postId.");
-    const blockedIds = await blockSetFor(uid);
+    const [blockedIds, friendIds, postDoc] = await Promise.all([
+        blockSetFor(uid),
+        friendSetFor(uid),
+        db.collection("posts").doc(postId).get(),
+    ]);
+    if (!postDoc.exists || !isVisiblePostData(postDoc.data() || {}, uid, blockedIds, friendIds)) {
+        throw new https_1.HttpsError("permission-denied", "Post is not available.");
+    }
     const snap = await db.collection("post_replies").where("postId", "==", postId).get();
     const replyDocs = snap.docs.filter((d) => {
         const authorId = d.get("authorId");
@@ -1354,6 +1428,30 @@ exports.getPostReplies = (0, https_1.onCall)({ invoker: "public", cors: true }, 
     const replies = replyDocs.map((docSnap) => (Object.assign(Object.assign({}, serializeDoc(docSnap)), { authorProfilePicture: docSnap.get("authorProfilePicture") || avatarMap.get(docSnap.get("authorId")) || null })));
     return { replies };
 });
+exports.getProductReviews = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const productId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.productId) === "string" ? request.data.productId : "";
+    if (!productId)
+        throw new https_1.HttpsError("invalid-argument", "Missing productId.");
+    const productDoc = await db.collection("products").doc(productId).get();
+    if (!productDoc.exists)
+        return { reviews: [] };
+    const sellerId = productDoc.get("sellerId");
+    if (typeof sellerId !== "string" || (uid !== sellerId && await hasBlockRelationship(uid, sellerId))) {
+        return { reviews: [] };
+    }
+    const blockedIds = await blockSetFor(uid);
+    const reviewsSnap = await db.collection("reviews").where("productId", "==", productId).limit(100).get();
+    const reviews = reviewsSnap.docs
+        .filter((docSnap) => {
+        const reviewerId = docSnap.get("reviewerId");
+        return typeof reviewerId !== "string" || reviewerId === uid || !blockedIds.has(reviewerId);
+    })
+        .sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"))
+        .map(serializeDoc);
+    return { reviews };
+});
 exports.getLandingStats = (0, https_1.onCall)({ invoker: "public", cors: true }, async () => {
     const [usersSnap, productsSnap, schoolsSnap] = await Promise.all([
         db.collection("users").limit(1000).get(),
@@ -1365,6 +1463,30 @@ exports.getLandingStats = (0, https_1.onCall)({ invoker: "public", cors: true },
         totalProducts: productsSnap.size,
         totalSchools: schoolsSnap.size,
     };
+});
+exports.deletePostCascade = (0, https_1.onCall)({ invoker: "public", cors: true, timeoutSeconds: 120 }, async (request) => {
+    var _a, _b, _c;
+    const uid = assertAuthedUid(request);
+    const postId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.postId) === "string" ? request.data.postId : "";
+    if (!postId)
+        throw new https_1.HttpsError("invalid-argument", "Missing postId.");
+    const postRef = db.collection("posts").doc(postId);
+    const postDoc = await postRef.get();
+    if (!postDoc.exists)
+        return { success: true, deleted: { replies: 0, upvotes: 0, downvotes: 0, reactions: 0, saves: 0 } };
+    const authorId = postDoc.get("authorId");
+    if (authorId !== uid && ((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) !== true) {
+        throw new https_1.HttpsError("permission-denied", "Only the post author or an admin can delete this post.");
+    }
+    const [replies, upvotes, downvotes, reactions, saves] = await Promise.all([
+        deleteQueryDocs(db.collection("post_replies").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_upvotes").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_downvotes").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_reactions").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("saved_posts").where("postId", "==", postId)),
+    ]);
+    await postRef.delete();
+    return { success: true, deleted: { replies, upvotes, downvotes, reactions, saves } };
 });
 exports.rateLimitPost = (0, firestore_1.onDocumentCreated)({ document: "posts/{postId}" }, async (event) => {
     var _a;

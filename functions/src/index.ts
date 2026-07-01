@@ -15,8 +15,11 @@ type PublicUser = {
   username?: string;
   school?: string;
   city?: string;
+  about?: string | null;
   profilePicture?: string | null;
+  coverPhoto?: string | null;
   verified?: boolean;
+  reputation?: number;
   accountType?: string;
   orgName?: string;
 };
@@ -56,8 +59,11 @@ function publicUserFromDoc(doc: admin.firestore.DocumentSnapshot): PublicUser | 
     username: typeof data.username === "string" ? data.username : undefined,
     school: typeof data.school === "string" ? data.school : undefined,
     city: typeof data.city === "string" ? data.city : undefined,
+    about: typeof data.about === "string" ? data.about : null,
     profilePicture: typeof data.profilePicture === "string" ? data.profilePicture : null,
+    coverPhoto: typeof data.coverPhoto === "string" ? data.coverPhoto : null,
     verified: data.verified === true,
+    reputation: typeof data.reputation === "number" ? data.reputation : undefined,
     accountType: typeof data.accountType === "string" ? data.accountType : undefined,
     orgName: typeof data.orgName === "string" ? data.orgName : undefined,
   };
@@ -87,6 +93,19 @@ async function hasBlockRelationship(uid1: string, uid2: string): Promise<boolean
     db.collection("blocks").doc(`${uid2}_${uid1}`).get(),
   ]);
   return aBlocksB.exists || bBlocksA.exists;
+}
+
+async function deleteQueryDocs(queryRef: admin.firestore.Query): Promise<number> {
+  const snap = await queryRef.get();
+  let deleted = 0;
+  for (let i = 0; i < snap.docs.length; i += 450) {
+    const batch = db.batch();
+    const chunk = snap.docs.slice(i, i + 450);
+    chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    deleted += chunk.length;
+  }
+  return deleted;
 }
 
 function normalizeSearchTerm(value: unknown): string {
@@ -1360,6 +1379,43 @@ export const getPublicProfile = onCall({ invoker: "public", cors: true }, async 
   return { user: publicUserFromDoc(userDoc) };
 });
 
+export const getPublicProfileContent = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const userId = typeof request.data?.userId === "string" ? request.data.userId : "";
+  if (!userId) throw new HttpsError("invalid-argument", "Missing userId.");
+  if (uid !== userId && await hasBlockRelationship(uid, userId)) {
+    return { user: null, posts: [], products: [] };
+  }
+
+  const [userDoc, blockedIds, friendIds, productSnap, postSnap] = await Promise.all([
+    db.collection("users").doc(userId).get(),
+    blockSetFor(uid),
+    friendSetFor(uid),
+    db.collection("products").where("sellerId", "==", userId).limit(120).get(),
+    db.collection("posts").where("authorId", "==", userId).limit(120).get(),
+  ]);
+
+  if (!userDoc.exists) return { user: null, posts: [], products: [] };
+
+  const productDocs = productSnap.docs.filter((docSnap) => {
+    const data = docSnap.data();
+    if (uid === userId) return true;
+    return !blockedIds.has(userId) && ["available", "sold"].includes(String(data.status || ""));
+  });
+
+  const postDocs = postSnap.docs.filter((docSnap) => {
+    const data = docSnap.data();
+    if (uid !== userId && data.isAnonymous === true) return false;
+    return isVisiblePostData(data, uid, blockedIds, friendIds);
+  });
+
+  productDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+  postDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+
+  const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+  return { user: publicUserFromDoc(userDoc), posts, products };
+});
+
 export const searchPublicUsers = onCall({ invoker: "public", cors: true }, async (request) => {
   const uid = assertAuthedUid(request);
   const term = normalizeSearchTerm(request.data?.query);
@@ -1520,7 +1576,15 @@ export const getPostReplies = onCall({ invoker: "public", cors: true }, async (r
   const postId = typeof request.data?.postId === "string" ? request.data.postId : "";
   if (!postId) throw new HttpsError("invalid-argument", "Missing postId.");
 
-  const blockedIds = await blockSetFor(uid);
+  const [blockedIds, friendIds, postDoc] = await Promise.all([
+    blockSetFor(uid),
+    friendSetFor(uid),
+    db.collection("posts").doc(postId).get(),
+  ]);
+  if (!postDoc.exists || !isVisiblePostData(postDoc.data() || {}, uid, blockedIds, friendIds)) {
+    throw new HttpsError("permission-denied", "Post is not available.");
+  }
+
   const snap = await db.collection("post_replies").where("postId", "==", postId).get();
   const replyDocs = snap.docs.filter((d) => {
     const authorId = d.get("authorId");
@@ -1541,6 +1605,32 @@ export const getPostReplies = onCall({ invoker: "public", cors: true }, async (r
   return { replies };
 });
 
+export const getProductReviews = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const productId = typeof request.data?.productId === "string" ? request.data.productId : "";
+  if (!productId) throw new HttpsError("invalid-argument", "Missing productId.");
+
+  const productDoc = await db.collection("products").doc(productId).get();
+  if (!productDoc.exists) return { reviews: [] };
+
+  const sellerId = productDoc.get("sellerId");
+  if (typeof sellerId !== "string" || (uid !== sellerId && await hasBlockRelationship(uid, sellerId))) {
+    return { reviews: [] };
+  }
+
+  const blockedIds = await blockSetFor(uid);
+  const reviewsSnap = await db.collection("reviews").where("productId", "==", productId).limit(100).get();
+  const reviews = reviewsSnap.docs
+    .filter((docSnap) => {
+      const reviewerId = docSnap.get("reviewerId");
+      return typeof reviewerId !== "string" || reviewerId === uid || !blockedIds.has(reviewerId);
+    })
+    .sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"))
+    .map(serializeDoc);
+
+  return { reviews };
+});
+
 export const getLandingStats = onCall({ invoker: "public", cors: true }, async () => {
   const [usersSnap, productsSnap, schoolsSnap] = await Promise.all([
     db.collection("users").limit(1000).get(),
@@ -1552,6 +1642,32 @@ export const getLandingStats = onCall({ invoker: "public", cors: true }, async (
     totalProducts: productsSnap.size,
     totalSchools: schoolsSnap.size,
   };
+});
+
+export const deletePostCascade = onCall({ invoker: "public", cors: true, timeoutSeconds: 120 }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const postId = typeof request.data?.postId === "string" ? request.data.postId : "";
+  if (!postId) throw new HttpsError("invalid-argument", "Missing postId.");
+
+  const postRef = db.collection("posts").doc(postId);
+  const postDoc = await postRef.get();
+  if (!postDoc.exists) return { success: true, deleted: { replies: 0, upvotes: 0, downvotes: 0, reactions: 0, saves: 0 } };
+
+  const authorId = postDoc.get("authorId");
+  if (authorId !== uid && request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Only the post author or an admin can delete this post.");
+  }
+
+  const [replies, upvotes, downvotes, reactions, saves] = await Promise.all([
+    deleteQueryDocs(db.collection("post_replies").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_upvotes").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_downvotes").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_reactions").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("saved_posts").where("postId", "==", postId)),
+  ]);
+
+  await postRef.delete();
+  return { success: true, deleted: { replies, upvotes, downvotes, reactions, saves } };
 });
 
 export const rateLimitPost = onDocumentCreated(

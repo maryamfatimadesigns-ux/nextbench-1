@@ -7,8 +7,11 @@ export interface DiscoveryUser {
   username?: string;
   school?: string;
   city?: string;
+  about?: string | null;
   profilePicture?: string | null;
+  coverPhoto?: string | null;
   verified?: boolean;
+  reputation?: number;
   accountType?: string;
   orgName?: string;
 }
@@ -72,6 +75,17 @@ export interface DiscoverySearchResult {
   products: DiscoveryProduct[];
 }
 
+export interface DiscoveryReview {
+  id: string;
+  productId: string;
+  sellerId?: string;
+  reviewerId: string;
+  reviewerName: string;
+  rating: number;
+  comment?: string;
+  createdAt: any;
+}
+
 export async function getDiscoveryFeed(cursor?: { postCreatedAt?: number; productCreatedAt?: number } | null) {
   const callable = httpsCallable<
     { postCreatedAt?: number; productCreatedAt?: number },
@@ -116,6 +130,33 @@ export async function getPublicProfile(userId: string) {
   const callable = httpsCallable<{ userId: string }, { user: DiscoveryUser | null }>(functions, 'getPublicProfile');
   const result = await callable({ userId });
   return result.data.user;
+}
+
+export async function getPublicProfileContent(userId: string) {
+  const callable = httpsCallable<
+    { userId: string },
+    { user: DiscoveryUser | null; posts: DiscoveryPost[]; products: DiscoveryProduct[] }
+  >(functions, 'getPublicProfileContent');
+  const result = await callable({ userId });
+  return result.data;
+}
+
+export async function getPostReplies(postId: string) {
+  const callable = httpsCallable<{ postId: string }, { replies: any[] }>(functions, 'getPostReplies');
+  const result = await callable({ postId });
+  return result.data.replies;
+}
+
+export async function getProductReviews(productId: string) {
+  const callable = httpsCallable<{ productId: string }, { reviews: DiscoveryReview[] }>(functions, 'getProductReviews');
+  const result = await callable({ productId });
+  return result.data.reviews;
+}
+
+export async function deletePostCascade(postId: string) {
+  const callable = httpsCallable<{ postId: string }, { success: boolean }>(functions, 'deletePostCascade');
+  const result = await callable({ postId });
+  return result.data;
 }
 
 export async function getLandingStats() {
