@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
@@ -28,12 +28,25 @@ export default function SuggestedUsers() {
   const allBlockedIds = useAllBlockedUserIds();
   const [suggestions, setSuggestions] = useState<SuggestedUser[]>([]);
   const [loading, setLoading] = useState(true);
+  // Guard: only fetch once per user session. followingIds Set reference changes
+  // on every Firestore snapshot which would re-trigger the effect endlessly.
+  const hasFetched = useRef(false);
 
   useEffect(() => {
     if (!user || !userData) {
       setLoading(false);
       return;
     }
+    // Reset fetch guard when user changes
+    hasFetched.current = false;
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user || !userData) return;
+    // Skip if already fetched for this user; wait until followingIds has
+    // settled (loaded from Firestore) before running the FoF algorithm.
+    if (hasFetched.current) return;
+    hasFetched.current = true;
 
     const fetchSuggestions = async () => {
       try {
@@ -142,7 +155,7 @@ export default function SuggestedUsers() {
     };
 
     fetchSuggestions();
-  }, [user?.uid, userData, followingIds]);
+  }, [user?.uid, userData, followingIds.size]);
 
   const toggleFollow = async (e: React.MouseEvent, targetId: string) => {
     e.preventDefault();
