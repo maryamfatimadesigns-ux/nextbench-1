@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { collection, query, getDocs, limit, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -61,7 +61,7 @@ export default function Search() {
   }, [user?.uid]);
 
   // Cache for suggestions to avoid re-fetching on empty search
-  const [suggestionsFetched, setSuggestionsFetched] = useState(false);
+  const suggestionsFetchedRef = useRef(false);
   const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
   const [suggestedPosts, setSuggestedPosts] = useState<any[]>([]);
   const [suggestedProducts, setSuggestedProducts] = useState<any[]>([]);
@@ -73,7 +73,8 @@ export default function Search() {
 
     // Show suggestions when search is empty and no filters
     if (!isSearchActive) {
-      if (!suggestionsFetched) {
+      if (!suggestionsFetchedRef.current) {
+        suggestionsFetchedRef.current = true;
         // Fetch suggestions only once
         const fetchSuggestions = async () => {
           setLoading(true);
@@ -106,7 +107,6 @@ export default function Search() {
             setPosts(fetchedPosts);
             setProducts(fetchedProducts);
             setClubs(fetchedClubs);
-            setSuggestionsFetched(true);
           } catch (err) {
             console.error('Failed to load suggestions:', err);
           } finally {
@@ -115,11 +115,10 @@ export default function Search() {
         };
         fetchSuggestions();
       } else {
-        // Restore from cache, re-applying block filters in case they loaded
-        // after the suggestions were first fetched.
-        setUsers(suggestedUsers.filter((u: any) => !allBlockedIds.has(u.id)));
-        setPosts(suggestedPosts.filter((p: any) => !allBlockedIds.has(p.authorId)));
-        setProducts(suggestedProducts.filter((p: any) => !allBlockedIds.has(p.sellerId)));
+        // Restore from cache
+        setUsers(suggestedUsers);
+        setPosts(suggestedPosts);
+        setProducts(suggestedProducts);
         setClubs(suggestedClubs);
         setLoading(false);
       }
@@ -179,7 +178,22 @@ export default function Search() {
     }, 400); // 400ms debounce
 
     return () => clearTimeout(debounceTimer);
-  }, [searchQuery, appliedSchool, appliedLocation, suggestionsFetched, allBlockedIds, user?.uid]);
+  }, [searchQuery, appliedSchool, appliedLocation, user?.uid]);
+
+  // Apply block filter at render time — avoids putting allBlockedIds in the
+  // effect dep array which would re-trigger the search on every snapshot.
+  const filteredUsers = useMemo(
+    () => users.filter((u: any) => !allBlockedIds.has(u.id)),
+    [users, allBlockedIds]
+  );
+  const filteredPosts = useMemo(
+    () => posts.filter((p: any) => !allBlockedIds.has(p.authorId)),
+    [posts, allBlockedIds]
+  );
+  const filteredProducts = useMemo(
+    () => products.filter((p: any) => !allBlockedIds.has(p.sellerId)),
+    [products, allBlockedIds]
+  );
 
   const toggleFollow = async (e: React.MouseEvent, targetId: string) => {
     e.preventDefault();
@@ -316,18 +330,18 @@ export default function Search() {
             <AnimatePresence mode="popLayout">
             
             {/* USERS */}
-            {(activeTab === 'all' || activeTab === 'users') && users.length > 0 && (
+            {(activeTab === 'all' || activeTab === 'users') && filteredUsers.length > 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="theme-card rounded-2xl p-5 luxury-shadow">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-serif font-bold italic text-luxury-ink">People</h3>
-                  {activeTab === 'all' && users.length > 3 && (
+                  {activeTab === 'all' && filteredUsers.length > 3 && (
                     <button onClick={() => setActiveTab('users')} className="text-xs font-bold text-brand-teal uppercase tracking-widest flex items-center gap-1 hover:opacity-80">
                       See all <ArrowRight size={14} />
                     </button>
                   )}
                 </div>
                 <div className="flex flex-col gap-4">
-                  {(activeTab === 'all' ? users.slice(0, 3) : users).map((u) => {
+                  {(activeTab === 'all' ? filteredUsers.slice(0, 3) : filteredUsers).map((u) => {
                     const isFollowing = followingIds.has(u.id);
                     return (
                       <Link key={u.id || u.uid || Math.random()} to={`/profile/${u.id || u.uid}`} className="flex items-center justify-between group p-2 hover:bg-surface-soft rounded-xl transition-colors">
@@ -425,7 +439,7 @@ export default function Search() {
             )}
 
             {/* PRODUCTS */}
-            {(activeTab === 'all' || activeTab === 'products') && products.length > 0 && (
+            {(activeTab === 'all' || activeTab === 'products') && filteredProducts.length > 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 {activeTab === 'all' && (
                   <div className="flex items-center justify-between mb-4 px-2 mt-4">
@@ -433,7 +447,7 @@ export default function Search() {
                   </div>
                 )}
                 <div className="flex flex-col gap-6 w-full">
-                  {(activeTab === 'all' ? products.slice(0, 3) : products).map((p) => (
+                  {(activeTab === 'all' ? filteredProducts.slice(0, 3) : filteredProducts).map((p) => (
                     <ProductCard key={`search-prod-${p.id}`} product={p as any} isWishlisted={false} wishlistDocId={undefined} />
                   ))}
                 </div>
@@ -441,7 +455,7 @@ export default function Search() {
             )}
 
             {/* POSTS */}
-            {(activeTab === 'all' || activeTab === 'posts') && posts.length > 0 && (
+            {(activeTab === 'all' || activeTab === 'posts') && filteredPosts.length > 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 {activeTab === 'all' && (
                   <div className="flex items-center justify-between mb-4 px-2 mt-4">
@@ -449,7 +463,7 @@ export default function Search() {
                   </div>
                 )}
                 <div className="flex flex-col gap-6 w-full">
-                  {(activeTab === 'all' ? posts.slice(0, 3) : posts).map((p) => (
+                  {(activeTab === 'all' ? filteredPosts.slice(0, 3) : filteredPosts).map((p) => (
                     <PostCard 
                       key={`search-post-${p.id}`} 
                       post={p as any} 
@@ -461,7 +475,7 @@ export default function Search() {
               </motion.div>
             )}
             {/* Empty States */}
-            {!loading && activeTab === 'users' && users.length === 0 && (
+            {!loading && activeTab === 'users' && filteredUsers.length === 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-20 text-center">
                 <Users size={48} className="mx-auto text-luxury-ink/10 mb-4" />
                 <p className="text-luxury-ink/40 font-serif italic text-xl">No such user exists yet</p>
@@ -469,7 +483,7 @@ export default function Search() {
               </motion.div>
             )}
 
-            {!loading && activeTab === 'all' && users.length === 0 && posts.length === 0 && products.length === 0 && clubs.length === 0 && (
+            {!loading && activeTab === 'all' && filteredUsers.length === 0 && filteredPosts.length === 0 && filteredProducts.length === 0 && clubs.length === 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-20 text-center">
                 <SearchIcon size={48} className="mx-auto text-luxury-ink/10 mb-4" />
                 <p className="text-luxury-ink/40 font-serif italic text-xl">No results found for "{searchQuery}"</p>
@@ -480,7 +494,7 @@ export default function Search() {
           </AnimatePresence>
 
           {/* Guest Block */}
-          {!user && !loading && (users.length > 0 || posts.length > 0 || products.length > 0 || clubs.length > 0) && (
+          {!user && !loading && (filteredUsers.length > 0 || filteredPosts.length > 0 || filteredProducts.length > 0 || clubs.length > 0) && (
             <div className="mt-8 py-12 px-6 flex flex-col items-center justify-center text-center bg-surface-card border rounded-3xl" style={{ borderColor: 'var(--color-border)' }}>
               <Lock className="w-12 h-12 text-luxury-ink/20 mb-4" />
               <h3 className="text-xl font-bold text-luxury-ink mb-2">Register to see more results</h3>
