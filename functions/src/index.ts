@@ -1756,6 +1756,7 @@ export const rateLimitReply = onDocumentCreated(
 export const createNotification = onCall({ invoker: "public", cors: true }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Must be logged in.");
+  const isAdminCaller = request.auth?.token?.admin === true;
 
   const { userId, type, title, message, link, postId } = request.data as {
     userId: string;
@@ -1779,9 +1780,13 @@ export const createNotification = onCall({ invoker: "public", cors: true }, asyn
   // Restrict administrative/sensitive notification types to actual admin users
   const adminNotifTypes = ['listing_approved', 'listing_rejected', 'admin_promoted', 'user_approved'];
   if (adminNotifTypes.includes(type)) {
-    if (request.auth?.token?.admin !== true) {
+    if (!isAdminCaller) {
       throw new HttpsError("permission-denied", "Only admins can trigger administrative notifications.");
     }
+  }
+
+  if (!isAdminCaller && uid !== userId && await hasBlockRelationship(uid, userId)) {
+    throw new HttpsError("permission-denied", "Cannot notify this user.");
   }
 
   // Check that the recipient user document exists

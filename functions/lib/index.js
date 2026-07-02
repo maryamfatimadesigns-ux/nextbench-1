@@ -434,11 +434,24 @@ exports.verifyAuthOtpEmail = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET], i
             throw err;
         }
     }
-    // Bypass createCustomToken by setting a strong random password 
-    // and letting the client log in via Email/Password. This avoids IAM signBlob permission issues.
-    const loginPassword = crypto.randomBytes(32).toString("hex");
-    await admin.auth().updateUser(uid, { password: loginPassword });
-    return { loginPassword, email: rawEmail, isNewUser };
+    // Preferred path: mint a custom token so the client can sign in without
+    // touching the user's password. This requires the function's service account
+    // to have the "Service Account Token Creator" role (iam.serviceAccounts.signBlob).
+    try {
+        const customToken = await admin.auth().createCustomToken(uid);
+        return { customToken, email: rawEmail, isNewUser };
+    }
+    catch (tokenErr) {
+        // Fallback (legacy behavior): if custom-token signing is unavailable (missing
+        // IAM signBlob permission), rotate to a strong random password and let the
+        // client log in via Email/Password. Kept so login never breaks while the IAM
+        // role is being provisioned. See thingstofix.md 8.1.
+        console.error("[verifyAuthOtpEmail] createCustomToken failed, falling back to password login. " +
+            "Grant the function service account the 'Service Account Token Creator' role to remove this fallback.", tokenErr);
+        const loginPassword = crypto.randomBytes(32).toString("hex");
+        await admin.auth().updateUser(uid, { password: loginPassword });
+        return { loginPassword, email: rawEmail, isNewUser };
+    }
 });
 // ─── Existing: generateReferralCode ──────────────────────────────────────────
 function generateRandomCode(length) {
@@ -1553,6 +1566,7 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: true
     const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
     if (!uid)
         throw new https_1.HttpsError("unauthenticated", "Must be logged in.");
+    const isAdminCaller = ((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) === true;
     const { userId, type, title, message, link, postId } = request.data;
     if (!userId || !type || !title || !message) {
         throw new https_1.HttpsError("invalid-argument", "Missing required fields.");
@@ -1565,9 +1579,12 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: true
     // Restrict administrative/sensitive notification types to actual admin users
     const adminNotifTypes = ['listing_approved', 'listing_rejected', 'admin_promoted', 'user_approved'];
     if (adminNotifTypes.includes(type)) {
-        if (((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) !== true) {
+        if (!isAdminCaller) {
             throw new https_1.HttpsError("permission-denied", "Only admins can trigger administrative notifications.");
         }
+    }
+    if (!isAdminCaller && uid !== userId && await hasBlockRelationship(uid, userId)) {
+        throw new https_1.HttpsError("permission-denied", "Cannot notify this user.");
     }
     // Check that the recipient user document exists
     const userSnap = await db.collection("users").doc(userId).get();
