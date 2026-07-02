@@ -1384,6 +1384,34 @@ export const getPublicUsers = onCall({ invoker: "public", cors: true }, async (r
   return { users };
 });
 
+export const getBlockedUsers = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const blockSnap = await db.collection("blocks")
+    .where("blockerId", "==", uid)
+    .limit(100)
+    .get();
+
+  if (blockSnap.empty) return { users: [] };
+
+  const blockedIds = blockSnap.docs
+    .map((docSnap) => docSnap.get("blockedId"))
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  const userDocs = await db.getAll(...blockedIds.map((id) => db.collection("users").doc(id)));
+  const userMap = new Map(userDocs.map((docSnap) => [docSnap.id, publicUserFromDoc(docSnap)]));
+  const users = blockSnap.docs.map((blockDocSnap) => {
+    const blockedId = blockDocSnap.get("blockedId");
+    const user = typeof blockedId === "string" ? userMap.get(blockedId) : null;
+    return {
+      ...(user || { name: "Deleted user" }),
+      blockDocId: blockDocSnap.id,
+      id: typeof blockedId === "string" ? blockedId : blockDocSnap.id,
+    };
+  });
+
+  return { users };
+});
+
 export const getPublicProfile = onCall({ invoker: "public", cors: true }, async (request) => {
   const uid = assertAuthedUid(request);
   const userId = typeof request.data?.userId === "string" ? request.data.userId : "";

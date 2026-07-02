@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.deletePostCascade = exports.getLandingStats = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
+exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.deletePostCascade = exports.getLandingStats = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getBlockedUsers = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -1211,6 +1211,26 @@ exports.getPublicUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, 
         .filter((d) => d.id === uid || !blockedIds.has(d.id))
         .map(publicUserFromDoc)
         .filter((u) => u !== null);
+    return { users };
+});
+exports.getBlockedUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    const uid = assertAuthedUid(request);
+    const blockSnap = await db.collection("blocks")
+        .where("blockerId", "==", uid)
+        .limit(100)
+        .get();
+    if (blockSnap.empty)
+        return { users: [] };
+    const blockedIds = blockSnap.docs
+        .map((docSnap) => docSnap.get("blockedId"))
+        .filter((id) => typeof id === "string" && id.length > 0);
+    const userDocs = await db.getAll(...blockedIds.map((id) => db.collection("users").doc(id)));
+    const userMap = new Map(userDocs.map((docSnap) => [docSnap.id, publicUserFromDoc(docSnap)]));
+    const users = blockSnap.docs.map((blockDocSnap) => {
+        const blockedId = blockDocSnap.get("blockedId");
+        const user = typeof blockedId === "string" ? userMap.get(blockedId) : null;
+        return Object.assign(Object.assign({}, (user || { name: "Deleted user" })), { blockDocId: blockDocSnap.id, id: typeof blockedId === "string" ? blockedId : blockDocSnap.id });
+    });
     return { users };
 });
 exports.getPublicProfile = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
