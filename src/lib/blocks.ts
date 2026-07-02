@@ -11,7 +11,7 @@
  * - Block check on DM creation, search, post views, etc.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   doc, setDoc, deleteDoc, serverTimestamp, getDoc,
   collection, query, where, onSnapshot, getDocs
@@ -145,17 +145,15 @@ export function useBlockedByIds(): Set<string> {
 export function useAllBlockedUserIds(): Set<string> {
   const blockedIds = useBlockedIds();
   const blockedByIds = useBlockedByIds();
-  const [combined, setCombined] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  return useMemo(() => {
     const s = new Set<string>();
     blockedIds.forEach(id => s.add(id));
     blockedByIds.forEach(id => s.add(id));
-    setCombined(s);
+    return s;
   }, [blockedIds, blockedByIds]);
-
-  return combined;
 }
+
 
 /**
  * Hook: block status between current user and a target user
