@@ -3,8 +3,9 @@ import { motion } from 'motion/react';
 import { Copy, Check, Users, Gift, Loader2 } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { doc, getDoc, collection, getCountFromServer, updateDoc, query, where, getDocs, limit, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, getCountFromServer, query, getDocs, limit } from 'firebase/firestore';
 import { useToast } from '../../lib/ToastContext';
+import { createInviteCode, getPublicUsers } from '../../lib/discovery';
 
 export default function Invite() {
   const { user } = useAuth();
@@ -30,13 +31,14 @@ export default function Invite() {
         setReferralCount(countSnap.data().count);
 
         const referralsSnap = await getDocs(query(coll, limit(50)));
-        const usersList: any[] = [];
-        for (const d of referralsSnap.docs) {
-          const uDoc = await getDoc(doc(db, 'users', d.id));
-          if (uDoc.exists()) {
-            usersList.push({ id: uDoc.id, ...uDoc.data(), joinedAt: d.data().timestamp });
-          }
-        }
+        const referredIds = referralsSnap.docs.map(d => d.id);
+        const userMap = new Map((await getPublicUsers(referredIds)).map(u => [u.id, u]));
+        const usersList = referralsSnap.docs
+          .map(d => {
+            const referredUser = userMap.get(d.id);
+            return referredUser ? { ...referredUser, joinedAt: d.data().timestamp } : null;
+          })
+          .filter(Boolean) as any[];
         // sort by most recent joined
         usersList.sort((a, b) => (b.joinedAt?.toMillis() || 0) - (a.joinedAt?.toMillis() || 0));
         setReferredUsers(usersList);
@@ -53,28 +55,7 @@ export default function Invite() {
     if (!user) return;
     setIsGenerating(true);
     try {
-      let uniqueCode = '';
-      let isUnique = false;
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      
-      while (!isUnique) {
-        let code = '';
-        for (let i = 0; i < 8; i++) {
-          code += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        
-        const q = query(collection(db, 'users'), where('referralCode', '==', code), limit(1));
-        const snap = await getDocs(q);
-        if (snap.empty) {
-          uniqueCode = code;
-          isUnique = true;
-        }
-      }
-      
-      await updateDoc(doc(db, 'users', user.uid), { 
-        referralCode: uniqueCode,
-        updatedAt: serverTimestamp()
-      });
+      const uniqueCode = await createInviteCode();
       setReferralCode(uniqueCode);
       showToast('Referral code generated successfully!', 'success');
     } catch (err: any) {

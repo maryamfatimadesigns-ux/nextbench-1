@@ -1,10 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useAnimationControls } from 'motion/react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { getOptimizedImageUrl } from '../lib/utils';
 import SEO from '../components/seo/SEO';
+import { getDiscoveryFeed } from '../lib/discovery';
 
 interface MarketplaceItem {
   id: string;
@@ -140,26 +139,23 @@ export default function Marketplace() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'products'),
-      where('status', '==', 'available')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data: MarketplaceItem[] = [];
-      snapshot.forEach(d => {
-        const p = d.data();
-        data.push({ id: d.id, title: p.title, price: p.price, image: p.image, createdAt: p.createdAt });
+    let cancelled = false;
+    getDiscoveryFeed()
+      .then((data) => {
+        if (cancelled) return;
+        const products = data.products
+          .filter((p) => p.status === 'available')
+          .map((p) => ({ id: p.id, title: p.title, price: p.price, image: p.image, createdAt: p.createdAt }));
+        setItems(products);
+      })
+      .catch((error) => {
+        console.error('Failed to load marketplace items', error);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-      data.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-      setItems(data);
-      setLoading(false);
-    }, (error) => {
-      console.error('Failed to load marketplace items', error);
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
+    return () => { cancelled = true; };
   }, []);
 
   const goToLogin = () => navigate('/login');

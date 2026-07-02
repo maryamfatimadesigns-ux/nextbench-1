@@ -1,5 +1,6 @@
 import { db } from './firebase';
-import { collection, query, where, getDocs, addDoc, deleteDoc, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, serverTimestamp, doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { isBlockRelationship } from './blocks';
 
 export interface SavedPost {
   id: string;
@@ -9,6 +10,12 @@ export interface SavedPost {
 }
 
 export const savePost = async (userId: string, postId: string) => {
+  const postSnap = await getDoc(doc(db, 'posts', postId));
+  const authorId = postSnap.data()?.authorId;
+  if (typeof authorId === 'string' && await isBlockRelationship(userId, authorId)) {
+    throw new Error('BLOCKED: Cannot save this post.');
+  }
+
   const q = query(
     collection(db, 'saved_posts'),
     where('userId', '==', userId),

@@ -20,6 +20,7 @@ import { useUserClubs, createClub } from '../../lib/clubs';
 import { useToast } from '../../lib/ToastContext';
 import ChatRoom from './ChatRoom';
 import ClubChat from './ClubChat';
+import { searchPublicUsers } from '../../lib/discovery';
 
 interface ChatRoomItem {
   id: string;
@@ -152,26 +153,23 @@ export default function MessagesLayout() {
     if (!showNewDM) { setUserResults([]); return; }
     setSearchingUsers(true);
 
-    let q;
-    if (searchUsers.trim()) {
-      const searchTerm = searchUsers.trim().charAt(0).toUpperCase() + searchUsers.trim().slice(1);
-      q = query(collection(db, 'users'), where('name', '>=', searchTerm), where('name', '<=', searchTerm + '\uf8ff'), limit(20));
-    } else {
-      q = query(collection(db, 'users'), limit(20));
-    }
+    let cancelled = false;
+    searchPublicUsers({
+      query: searchUsers,
+      limit: 20,
+      excludeIds: user ? [user.uid] : [],
+    }).then((results) => {
+      if (!cancelled) setUserResults(results.filter(u => !allBlockedIds.has(u.id)));
+    }).catch((err) => {
+      if (!cancelled) {
+        console.error(err);
+        setUserResults([]);
+      }
+    }).finally(() => {
+      if (!cancelled) setSearchingUsers(false);
+    });
 
-    const unsub = onSnapshot(q, (snap) => {
-      const results: any[] = [];
-      snap.forEach(d => { 
-        if (d.id !== user?.uid && !allBlockedIds.has(d.id)) {
-          results.push({ id: d.id, ...d.data() }); 
-        }
-      });
-      setUserResults(results);
-      setSearchingUsers(false);
-    }, (err) => { console.error(err); setSearchingUsers(false); });
-
-    return () => unsub();
+    return () => { cancelled = true; };
   }, [searchUsers, showNewDM, user?.uid]);
 
   const handleStartDM = async (otherUserId: string) => {
@@ -251,7 +249,7 @@ export default function MessagesLayout() {
   const filteredChatRooms = chatRooms.filter((room) => {
     const otherUserId = room.participants.find(id => id !== user?.uid);
     if (!otherUserId) return true;
-    if (blockedIds.has(otherUserId) || blockedByIds.has(otherUserId)) return false;
+    if (allBlockedIds.has(otherUserId)) return false;
     if (chatSearchTerm.trim()) {
       return (room.otherUser?.name?.toLowerCase() || '').includes(chatSearchTerm.toLowerCase());
     }

@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, Send, Link as LinkIcon, CheckCircle2, ShieldCheck, User, Share2 } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
-import { collection, query, where, getDocs, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, arrayUnion, limit, documentId } from 'firebase/firestore';
-import { getOrCreateDMRoom } from '../../lib/dm';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { sendSharedPostToUser, type SharedPostPayload } from '../../lib/dm';
 import { useToast } from '../../lib/ToastContext';
 import { getOptimizedImageUrl } from '../../lib/utils';
-import { createNotification } from '../../lib/notifications';
+import { searchPublicUsers } from '../../lib/discovery';
 
 interface SharedPostData {
   id: string;
@@ -65,40 +65,23 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
     }
     
     setSearchingUsers(true);
-    let q;
-    
-    if (searchUsers.trim()) {
-      let searchTerm = searchUsers.trim();
-      searchTerm = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1);
-      const endStr = searchTerm + '\uf8ff';
-      q = query(
-        collection(db, 'users'),
-        where('name', '>=', searchTerm),
-        where('name', '<=', endStr),
-        limit(20)
-      );
-    } else if (followingIds.size > 0) {
-      const idsToFetch = Array.from(followingIds).slice(0, 30);
-      q = query(collection(db, 'users'), where(documentId(), 'in', idsToFetch));
-    } else {
-      q = query(collection(db, 'users'), limit(20));
-    }
-
-    const unsub = onSnapshot(q, (snap) => {
-      const results: any[] = [];
-      snap.forEach(d => {
-        if (d.id !== user?.uid) {
-          results.push({ id: d.id, ...d.data() });
-        }
-      });
-      setUserResults(results);
-      setSearchingUsers(false);
-    }, (err) => {
-      console.error('Error fetching users for share:', err);
-      setSearchingUsers(false);
+    let cancelled = false;
+    searchPublicUsers({
+      query: searchUsers,
+      limit: 30,
+      excludeIds: user ? [user.uid] : [],
+    }).then((results) => {
+      if (!cancelled) setUserResults(results);
+    }).catch((err) => {
+      if (!cancelled) {
+        console.error('Error fetching users for share:', err);
+        setUserResults([]);
+      }
+    }).finally(() => {
+      if (!cancelled) setSearchingUsers(false);
     });
 
-    return () => unsub();
+    return () => { cancelled = true; };
   }, [searchUsers, isOpen, user?.uid]);
 
   const handleCopyLink = () => {
@@ -113,51 +96,26 @@ export default function ShareModal({ isOpen, onClose, postUrl, postTitle, shared
     setSendingTo(prev => new Set(prev).add(otherUserId));
 
     try {
-      const roomId = await getOrCreateDMRoom(user.uid, otherUserId);
-      const chatPreviewText = sharedPost ? `Shared: ${postTitle}` : `Shared a link: ${postTitle}`;
-
-      const messageData: any = {
-        senderId: user.uid,
-        createdAt: serverTimestamp(),
-        text: ''
-      };
-      
-      if (!sharedPost) {
-        messageData.text = `${postTitle}\n${postUrl}`;
-      } else {
-        messageData.text = '';
-      }
-
-      if (sharedPost) {
-        messageData.sharedPost = { ...sharedPost };
-        Object.keys(messageData.sharedPost).forEach(key => {
-          if (messageData.sharedPost[key] === undefined) {
-            delete messageData.sharedPost[key];
-          }
-        });
-      }
-
-      await addDoc(collection(db, 'chatRooms', roomId, 'messages'), messageData);
-
-      await updateDoc(doc(db, 'chatRooms', roomId), {
-        lastMessage: chatPreviewText,
-        lastSenderId: user.uid,
-        updatedAt: serverTimestamp(),
-        unreadBy: arrayUnion(otherUserId)
-      });
-
-      createNotification({
-        userId: otherUserId,
-        type: 'new_message',
-        title: 'New Message',
-        message: `${userData?.name || 'Someone'} shared a link with you`,
-        link: `/chat/${roomId}`
-      });
+      const payload: SharedPostPayload = sharedPost
+        ? {
+          id: sharedPost.id,
+          title: sharedPost.title,
+          description: sharedPost.description || '',
+          image: sharedPost.image,
+          authorName: sharedPost.authorName || userData?.name || 'Unknown User',
+        }
+        : {
+          id: postUrl,
+          title: postTitle,
+          description: postUrl,
+          authorName: userData?.name || 'Someone',
+        };
+      await sendSharedPostToUser(user.uid, otherUserId, payload);
 
       setSentTo(prev => new Set(prev).add(otherUserId));
     } catch (err) {
       console.error('Failed to share:', err);
-      showToast('Failed to send message', 'error');
+      showToast((err as Error)?.message?.includes('BLOCKED') ? 'Cannot send to this user.' : 'Failed to send message', 'error');
     } finally {
       setSendingTo(prev => {
         const next = new Set(prev);

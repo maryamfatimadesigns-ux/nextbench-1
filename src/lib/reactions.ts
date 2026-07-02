@@ -1,6 +1,7 @@
-import { doc, runTransaction, serverTimestamp, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp, setDoc, deleteDoc, collection, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { handleFirestoreError, OperationType } from './firestore-errors';
+import { isBlockRelationship } from './blocks';
 
 // ─── Special Reactions System ────────────────────────────────
 
@@ -26,6 +27,11 @@ export const REACTION_KEYS = Object.keys(REACTION_TYPES) as ReactionType[];
 export async function togglePostReaction(postId: string, userId: string, reaction: ReactionType) {
   try {
     const postRef = doc(db, 'posts', postId);
+    const postSnap = await getDoc(postRef);
+    const authorId = postSnap.data()?.authorId;
+    if (typeof authorId === 'string' && await isBlockRelationship(userId, authorId)) {
+      throw new Error('BLOCKED: Cannot react to this post.');
+    }
     
     // We will query to see if the user already has ANY reaction for this post
     const q = query(

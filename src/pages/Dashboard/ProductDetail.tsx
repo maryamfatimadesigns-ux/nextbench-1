@@ -3,8 +3,8 @@ import SEO from '../../components/seo/SEO';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, ChevronLeft, ChevronRight, Star, MessageSquare, Heart, Share2, X, Send, MapPin } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, deleteDoc, arrayUnion } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, addDoc, onSnapshot, deleteDoc, arrayUnion } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 import LinkifiedText from '../../components/ui/LinkifiedText';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useAuth } from '../../lib/AuthContext';
@@ -14,6 +14,8 @@ import { getOptimizedImageUrl } from '../../lib/utils';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import ShareModal from '../../components/ui/ShareModal';
 import { useBlockStatus } from '../../lib/blocks';
+import { getOrCreateDMRoom } from '../../lib/dm';
+import { getProductReviews } from '../../lib/discovery';
 
 interface ProductData {
   id: string;
@@ -57,6 +59,7 @@ export default function ProductDetail() {
   const [isWishlisted, setIsWishlisted] = useState(false);
   const [wishlistDocId, setWishlistDocId] = useState<string | null>(null);
   const [shareModalData, setShareModalData] = useState<{isOpen: boolean, url: string, title: string, sharedPost?: any}>({isOpen: false, url: '', title: ''});
+  const { isBlocked: iBlockedSeller, isBlockedBy: sellerBlockedMe } = useBlockStatus(product?.sellerId);
 
   // Reviews
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -87,13 +90,18 @@ export default function ProductDetail() {
   // Load reviews
   useEffect(() => {
     if (!id) return;
-    const q = query(collection(db, 'reviews'), where('productId', '==', id));
-    const unsub = onSnapshot(q, (snap) => {
-      const r: Review[] = [];
-      snap.forEach(d => r.push({ id: d.id, ...d.data() } as Review));
-      setReviews(r.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
-    });
-    return () => unsub();
+    let cancelled = false;
+    getProductReviews(id)
+      .then((items) => {
+        if (!cancelled) setReviews(items as Review[]);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('ProductDetail: reviews load failed', err);
+          setReviews([]);
+        }
+      });
+    return () => { cancelled = true; };
   }, [id]);
 
   // Check wishlist status
@@ -115,6 +123,10 @@ export default function ProductDetail() {
   const toggleWishlist = async () => {
     if (!user) { showToast('Please log in', 'warning'); return; }
     if (!id) return;
+    if (iBlockedSeller || sellerBlockedMe) {
+      showToast('This listing is unavailable.', 'error');
+      return;
+    }
     try {
       if (isWishlisted && wishlistDocId) {
         await deleteDoc(doc(db, 'wishlists', wishlistDocId));
@@ -147,66 +159,36 @@ export default function ProductDetail() {
     if (!userData || !userData.verified) { showToast('Only verified students can message sellers.', 'warning'); return; }
     if (!product || !id) return;
     if (product.sellerId === user.uid) { showToast('This is your listing.', 'info'); return; }
+    if (iBlockedSeller || sellerBlockedMe) {
+      showToast('Cannot message this user.', 'error');
+      return;
+    }
     setIsStartingChat(true);
     try {
-      // 1. Check for any existing DM room between these two users (type: 'dm')
-      const dmQuery = query(
-        collection(db, 'chatRooms'),
-        where('participants', 'array-contains', user.uid),
-        where('type', '==', 'dm')
-      );
-      const dmSnapshot = await getDocs(dmQuery);
-      const existingDMRoom = dmSnapshot.docs.find(d => d.data().participants.includes(product.sellerId));
-
-      // 2. Also check for a product-specific room for this listing
-      const productQuery = query(
-        collection(db, 'chatRooms'),
-        where('participants', 'array-contains', user.uid),
-        where('productId', '==', id)
-      );
-      const productSnapshot = await getDocs(productQuery);
-
-      let roomId = '';
-
-      if (existingDMRoom) {
-        // Existing DM — send an interest message into it instead of making a new chat
-        roomId = existingDMRoom.id;
-        const interestMessage = `Hey! I'm interested in your listing: "${product.title}" (₹${product.price})`;
-        await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
-          senderId: user.uid,
-          text: interestMessage,
-          createdAt: serverTimestamp(),
-        });
-        await updateDoc(doc(db, 'chatRooms', roomId), {
-          lastMessage: interestMessage,
-          lastSenderId: user.uid,
-          unreadBy: arrayUnion(product.sellerId),
-          updatedAt: serverTimestamp(),
-        });
-        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: interestMessage, link: `/messages/${roomId}` });
-        showToast('Message sent in your existing chat!', 'success');
-      } else if (!productSnapshot.empty) {
-        // Already have a product-specific room for this listing — just navigate there
-        roomId = productSnapshot.docs[0].id;
-      } else {
-        // No existing chat at all — create a new product-specific room
-        const inquiryMessage = `${userData.name} wants to chat about "${product.title}"`;
-        const newRoom = await addDoc(collection(db, 'chatRooms'), {
-          participants: [user.uid, product.sellerId],
-          type: 'dm',
-          productId: id,
-          productTitle: product.title,
-          lastMessage: inquiryMessage,
-          lastSenderId: user.uid,
-          unreadBy: [product.sellerId],
-          updatedAt: serverTimestamp(),
-        });
-        roomId = newRoom.id;
-        createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: inquiryMessage, link: `/messages/${roomId}` });
-      }
+      const roomId = await getOrCreateDMRoom(user.uid, product.sellerId);
+      const interestMessage = `Hey! I'm interested in your listing: "${product.title}" (₹${product.price})`;
+      await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
+        senderId: user.uid,
+        text: interestMessage,
+        createdAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'chatRooms', roomId), {
+        lastMessage: interestMessage,
+        lastSenderId: user.uid,
+        unreadBy: arrayUnion(product.sellerId),
+        updatedAt: serverTimestamp(),
+      });
+      createNotification({ userId: product.sellerId, type: 'new_message', title: 'New inquiry', message: interestMessage, link: `/messages/${roomId}` });
+      showToast('Message sent!', 'success');
 
       navigate(`/messages/${roomId}`, { state: { otherUser: { id: product.sellerId, name: product.sellerName, school: product.sellerSchool } } });
-    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'chatRooms'); }
+    } catch (err: any) {
+      if (err?.message?.includes('BLOCKED')) {
+        showToast('Cannot message this user.', 'error');
+      } else {
+        handleFirestoreError(err, OperationType.WRITE, 'chatRooms');
+      }
+    }
     finally { setIsStartingChat(false); }
   };
 
@@ -214,6 +196,10 @@ export default function ProductDetail() {
     if (!user || !userData) { showToast('Please log in to reserve items.', 'warning'); return; }
     if (!userData || !userData.verified) { showToast('Only verified students can reserve items.', 'warning'); return; }
     if (!product || !id || product.sellerId === user.uid) return;
+    if (iBlockedSeller || sellerBlockedMe) {
+      showToast('This listing is unavailable.', 'error');
+      return;
+    }
     setIsReserving(true);
     try {
       await updateDoc(doc(db, 'products', id), { status: 'reserved', reservedById: user.uid, updatedAt: serverTimestamp() });
@@ -240,6 +226,10 @@ export default function ProductDetail() {
   const handleUnreserve = async () => {
     if (!user || !product || !id) return;
     if (product.sellerId !== user.uid && product.reservedById !== user.uid) return;
+    if (product.reservedById === user.uid && (iBlockedSeller || sellerBlockedMe)) {
+      showToast('This listing is unavailable.', 'error');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'products', id), { status: 'available', reservedById: null, updatedAt: serverTimestamp() });
       setProduct(prev => prev ? { ...prev, status: 'available', reservedById: undefined } : null);
@@ -249,6 +239,10 @@ export default function ProductDetail() {
 
   const submitReview = async () => {
     if (!user || !userData || !id) return;
+    if (iBlockedSeller || sellerBlockedMe) {
+      showToast('This listing is unavailable.', 'error');
+      return;
+    }
     setSubmittingReview(true);
     try {
       await addDoc(collection(db, 'reviews'), {
@@ -265,9 +259,6 @@ export default function ProductDetail() {
     } catch { showToast('Failed to submit review', 'error'); }
     finally { setSubmittingReview(false); }
   };
-
-  // Block check: must be called unconditionally (Rules of Hooks)
-  const { isBlocked: iBlockedSeller, isBlockedBy: sellerBlockedMe } = useBlockStatus(product?.sellerId);
 
   if (loading) return <div className="pt-32 text-center text-xs font-bold uppercase tracking-widest text-brand-teal/40">Loading Item...</div>;
 

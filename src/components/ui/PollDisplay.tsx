@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { getOptimizedImageUrl } from '../../lib/utils';
 import { Link } from 'react-router-dom';
+import { getPublicUsers } from '../../lib/discovery';
 
 interface PollData {
   choices: string[];
@@ -50,26 +51,18 @@ export default function PollDisplay({ postId, poll, compact = false }: PollDispl
       setLoadingVoters(true);
       try {
         const newProfiles = { ...voterProfiles };
-        await Promise.all(
-          missingUids.map(async (uid) => {
-            try {
-              const userDoc = await getDoc(doc(db, 'users', uid));
-              if (userDoc.exists()) {
-                const data = userDoc.data();
-                newProfiles[uid] = {
-                  name: data.name || 'Anonymous User',
-                  username: data.username || undefined,
-                  profilePicture: data.profilePicture || undefined
-                };
-              } else {
-                newProfiles[uid] = { name: 'Unknown User' };
-              }
-            } catch (e) {
-              console.error('Error fetching voter profile:', e);
-              newProfiles[uid] = { name: 'Unknown User' };
+        const publicUsers = await getPublicUsers(missingUids);
+        const publicUserMap = new Map(publicUsers.map(u => [u.id, u]));
+        missingUids.forEach((uid) => {
+          const data = publicUserMap.get(uid);
+          newProfiles[uid] = data
+            ? {
+              name: data.name || 'Anonymous User',
+              username: data.username || undefined,
+              profilePicture: data.profilePicture || undefined
             }
-          })
-        );
+            : { name: 'Unknown User' };
+        });
         setVoterProfiles(newProfiles);
       } catch (err) {
         console.error('Error in fetchVoters:', err);

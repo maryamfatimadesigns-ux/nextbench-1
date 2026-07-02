@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useReducer, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3, ChevronLeft, ChevronRight, Paperclip, Film, Pencil } from 'lucide-react';
-import { collection, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs, writeBatch, orderBy, limit, documentId, startAfter, QueryDocumentSnapshot } from 'firebase/firestore';
+import { collection, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
@@ -27,6 +27,7 @@ import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import { usePublicClubs, joinClub } from '../../lib/clubs';
 import { savePost, unsavePost } from '../../lib/saves';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { deletePostCascade, getDiscoveryFeed } from '../../lib/discovery';
 
 // Minimal spinner used as Suspense fallback for lazy components
 const LazyFallback = () => (
@@ -158,6 +159,11 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function timestampMillis(value: any): number {
+  if (typeof value === 'number') return value;
+  return value?.toMillis?.() || 0;
 }
 
 // ─── Consolidated like / dislike / save interaction state ──────────────────
@@ -359,8 +365,7 @@ export default function Feed() {
   }, [imageFilePreviewUrls]);
 
   // ─── Pagination state ────────────────────────────────────
-  const [lastPostDoc, setLastPostDoc] = useState<QueryDocumentSnapshot | null>(null);
-  const [lastProductDoc, setLastProductDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [feedCursor, setFeedCursor] = useState<{ postCreatedAt?: number; productCreatedAt?: number }>({});
   const [hasMorePosts, setHasMorePosts] = useState(true);
   const [hasMoreProducts, setHasMoreProducts] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -409,63 +414,29 @@ export default function Feed() {
   const setPollHours = (v: number) => setPollState(s => ({ ...s, hours: v }));
   const setPollMinutes = (v: number) => setPollState(s => ({ ...s, minutes: v }));
 
-  // Firestore listener — stable subscription, no dependency on followingIds/friendIds.
-  // This listener only fires when Firestore posts actually change,
-  // NOT when the user's follows change.
-  // ─── Initial posts fetch (first 10) ─────────────────────
+  // Discovery feed is served through a callable so block relationships are
+  // enforced before posts/listings reach the client.
   useEffect(() => {
-    const fetchInitialPosts = async () => {
+    let cancelled = false;
+
+    const fetchInitialFeed = async () => {
       try {
-        const q = query(
-          collection(db, 'posts'),
-          where('status', '==', 'approved'),
-          orderBy('createdAt', 'desc'),
-          limit(20)
-        );
-        const snapshot = await getDocs(q);
-        const userCache: Record<string, any> = {};
-
-        const uncachedIds = new Set<string>();
-        snapshot.forEach(docSnap => {
-          const authorId = docSnap.data().authorId;
-          if (authorId && !userCache[authorId]) uncachedIds.add(authorId);
-        });
-        if (uncachedIds.size > 0) {
-          const idArray = Array.from(uncachedIds);
-          for (let i = 0; i < idArray.length; i += 30) {
-            const batch = idArray.slice(i, i + 30);
-            const batchSnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', batch)));
-            batchSnap.forEach(uDoc => { userCache[uDoc.id] = uDoc.data(); });
-            batch.forEach(uid => { if (!userCache[uid]) userCache[uid] = {}; });
-          }
-        }
-
-        const fetchedPosts: Post[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const isPostAnon = data.isAnonymous === true;
-          const authorData = isPostAnon ? {} : (userCache[data.authorId] || {});
-          fetchedPosts.push({
-            id: docSnap.id,
-            ...data,
-            authorName: isPostAnon ? (data.authorName || data.personaName || 'Anonymous') : (authorData.name || data.authorName || 'Unknown User'),
-            authorProfilePicture: isPostAnon ? null : (authorData.profilePicture || data.authorProfilePicture || null),
-            school: authorData.school || data.school || 'Unknown School',
-          } as Post);
-        });
-
-        setRawPosts(fetchedPosts);
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-        setLastPostDoc(lastDoc);
-        setHasMorePosts(snapshot.docs.length === 20);
+        const data = await getDiscoveryFeed();
+        if (cancelled) return;
+        setRawPosts(data.posts as Post[]);
+        setProducts(data.products as Product[]);
+        setFeedCursor(data.nextCursor || {});
+        setHasMorePosts(data.hasMorePosts);
+        setHasMoreProducts(data.hasMoreProducts);
       } catch (err) {
-        console.error('Error fetching posts:', err);
+        console.error('Error fetching feed:', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetchInitialPosts();
-  }, []);
+    fetchInitialFeed();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
 
   // Feed scoring — Instagram-style curated algorithm
   const posts = useMemo(() => {
@@ -473,7 +444,7 @@ export default function Feed() {
     const authorPostCount: Record<string, number> = {};
 
     const scored = rawPosts.map(post => {
-      const postTime = post.createdAt?.toMillis() || now;
+      const postTime = timestampMillis(post.createdAt) || now;
       const hoursPassed = Math.max(0, (now - postTime) / (1000 * 60 * 60));
 
       // 1. Base Engagement (Hype)
@@ -507,157 +478,33 @@ export default function Feed() {
 
     scored.sort((a, b) => {
       if (a.feedScore !== b.feedScore) return (b.feedScore || 0) - (a.feedScore || 0);
-      const timeA = a.createdAt?.toMillis() || 0;
-      const timeB = b.createdAt?.toMillis() || 0;
+      const timeA = timestampMillis(a.createdAt);
+      const timeB = timestampMillis(b.createdAt);
       return timeB - timeA;
     });
 
     return scored;
   }, [rawPosts, userData, followingIds, friendIds]);
 
-  // ─── Initial products fetch (first 5) ────────────────────
-  useEffect(() => {
-    const fetchInitialProducts = async () => {
-      try {
-        const q = query(
-          collection(db, 'products'),
-          where('status', 'in', ['available', 'sold']),
-          orderBy('createdAt', 'desc'),
-          limit(10)
-        );
-        const sellerCache: Record<string, any> = {};
-        const snapshot = await getDocs(q);
-
-        const uncachedIds = new Set<string>();
-        snapshot.forEach(docSnap => {
-          const sellerId = docSnap.data().sellerId;
-          if (sellerId && !sellerCache[sellerId]) uncachedIds.add(sellerId);
-        });
-        if (uncachedIds.size > 0) {
-          const idArray = Array.from(uncachedIds);
-          for (let i = 0; i < idArray.length; i += 30) {
-            const batch = idArray.slice(i, i + 30);
-            const batchSnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', batch)));
-            batchSnap.forEach(uDoc => { sellerCache[uDoc.id] = uDoc.data(); });
-            batch.forEach(uid => { if (!sellerCache[uid]) sellerCache[uid] = {}; });
-          }
-        }
-
-        const fetchedProducts: Product[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const sellerData = sellerCache[data.sellerId] || {};
-          fetchedProducts.push({
-            id: docSnap.id,
-            ...data,
-            sellerName: sellerData.name || data.sellerName || 'Unknown User',
-            sellerSchool: sellerData.school || data.sellerSchool || 'Unknown School',
-            sellerProfilePicture: sellerData.profilePicture || data.sellerProfilePicture || null,
-          } as Product);
-        });
-
-        setProducts(fetchedProducts);
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-        setLastProductDoc(lastDoc);
-        setHasMoreProducts(snapshot.docs.length === 10);
-      } catch (err) {
-        console.error('Error fetching products:', err);
-      }
-    };
-    fetchInitialProducts();
-  }, []);
-
-  // \u2500\u2500\u2500 Load more (cursor-based pagination) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ─── Load more (cursor-based pagination) ────────────────────────
   const loadMoreFeed = useCallback(async () => {
     if (isLoadingMore) return;
     if (!hasMorePosts && !hasMoreProducts) return;
     setIsLoadingMore(true);
 
     try {
-      // Load next 10 posts
-      if (hasMorePosts && lastPostDoc) {
-        const q = query(
-          collection(db, 'posts'),
-          where('status', '==', 'approved'),
-          orderBy('createdAt', 'desc'),
-          startAfter(lastPostDoc),
-          limit(20)
-        );
-        const snapshot = await getDocs(q);
-        const userCache: Record<string, any> = {};
-        const uncachedIds = new Set<string>();
-        snapshot.forEach(d => { const aid = d.data().authorId; if (aid && !userCache[aid]) uncachedIds.add(aid); });
-        if (uncachedIds.size > 0) {
-          const idArray = Array.from(uncachedIds);
-          for (let i = 0; i < idArray.length; i += 30) {
-            const batch = idArray.slice(i, i + 30);
-            const bs = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', batch)));
-            bs.forEach(u => { userCache[u.id] = u.data(); });
-            batch.forEach(uid => { if (!userCache[uid]) userCache[uid] = {}; });
-          }
-        }
-        const newPosts: Post[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const isPostAnon = data.isAnonymous === true;
-          const authorData = isPostAnon ? {} : (userCache[data.authorId] || {});
-          newPosts.push({
-            id: docSnap.id, ...data,
-            authorName: isPostAnon ? (data.authorName || data.personaName || 'Anonymous') : (authorData.name || data.authorName || 'Unknown User'),
-            authorProfilePicture: isPostAnon ? null : (authorData.profilePicture || data.authorProfilePicture || null),
-            school: authorData.school || data.school || 'Unknown School',
-          } as Post);
-        });
-        setRawPosts(prev => [...prev, ...newPosts]);
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-        setLastPostDoc(lastDoc);
-        setHasMorePosts(snapshot.docs.length === 20);
-      }
-
-      // Load next 5 products
-      if (hasMoreProducts && lastProductDoc) {
-        const q = query(
-          collection(db, 'products'),
-          where('status', 'in', ['available', 'sold']),
-          orderBy('createdAt', 'desc'),
-          startAfter(lastProductDoc),
-          limit(10)
-        );
-        const snapshot = await getDocs(q);
-        const sellerCache: Record<string, any> = {};
-        const uncachedIds = new Set<string>();
-        snapshot.forEach(d => { const sid = d.data().sellerId; if (sid && !sellerCache[sid]) uncachedIds.add(sid); });
-        if (uncachedIds.size > 0) {
-          const idArray = Array.from(uncachedIds);
-          for (let i = 0; i < idArray.length; i += 30) {
-            const batch = idArray.slice(i, i + 30);
-            const bs = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', batch)));
-            bs.forEach(u => { sellerCache[u.id] = u.data(); });
-            batch.forEach(uid => { if (!sellerCache[uid]) sellerCache[uid] = {}; });
-          }
-        }
-        const newProducts: Product[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const sellerData = sellerCache[data.sellerId] || {};
-          newProducts.push({
-            id: docSnap.id, ...data,
-            sellerName: sellerData.name || data.sellerName || 'Unknown User',
-            sellerSchool: sellerData.school || data.sellerSchool || 'Unknown School',
-            sellerProfilePicture: sellerData.profilePicture || data.sellerProfilePicture || null,
-          } as Product);
-        });
-        setProducts(prev => [...prev, ...newProducts]);
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-        setLastProductDoc(lastDoc);
-        setHasMoreProducts(snapshot.docs.length === 10);
-      }
+      const data = await getDiscoveryFeed(feedCursor);
+      setRawPosts(prev => [...prev, ...(data.posts as Post[])]);
+      setProducts(prev => [...prev, ...(data.products as Product[])]);
+      setFeedCursor(data.nextCursor || {});
+      setHasMorePosts(data.hasMorePosts);
+      setHasMoreProducts(data.hasMoreProducts);
     } catch (err) {
       console.error('Error loading more feed items:', err);
     } finally {
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, hasMorePosts, hasMoreProducts, lastPostDoc, lastProductDoc]);
+  }, [isLoadingMore, hasMorePosts, hasMoreProducts, feedCursor]);
 
   // \u2500\u2500\u2500 Background pre-upload when file is selected \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(() => {
@@ -1423,26 +1270,7 @@ export default function Feed() {
       async () => {
         setConfirmDialog(null);
         try {
-          const batch = writeBatch(db);
-
-          const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
-          const repliesSnap = await getDocs(repliesQ);
-          repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-          const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
-          const upvotesSnap = await getDocs(upvotesQ);
-          upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-          const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
-          const downvotesSnap = await getDocs(downvotesQ);
-          downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-          const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
-          const reactionsSnap = await getDocs(reactionsQ);
-          reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-          await batch.commit();
-          await deleteDoc(doc(db, 'posts', postId));
+          await deletePostCascade(postId);
 
           showToast('Post deleted successfully', 'success');
           setSelectedPost(null);
@@ -1513,8 +1341,8 @@ export default function Feed() {
     
     // Sort combined by feedScore (for posts) and time
     combined.sort((a, b) => {
-      const timeA = a.createdAt?.toMillis() || 0;
-      const timeB = b.createdAt?.toMillis() || 0;
+      const timeA = timestampMillis(a.createdAt);
+      const timeB = timestampMillis(b.createdAt);
       return timeB - timeA;
     });
     return combined;

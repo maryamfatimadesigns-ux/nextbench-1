@@ -13,6 +13,7 @@ import { useBlockedIds, useBlockedByIds } from '../../lib/blocks';
 import { useUserClubs, createClub, type ClubData } from '../../lib/clubs';
 import { useToast } from '../../lib/ToastContext';
 import { getPresenceFromData, usePresenceMap } from '../../lib/presence';
+import { searchPublicUsers } from '../../lib/discovery';
 
 interface ChatRoom {
   id: string;
@@ -146,43 +147,25 @@ export default function ChatList() {
     }
     
     setSearchingUsers(true);
-    
-    let q;
-    if (searchUsers.trim()) {
-      // First letter capitalized to help with common case-sensitivity issues
-      let searchTerm = searchUsers.trim();
-      searchTerm = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1);
-      const endStr = searchTerm + '\uf8ff';
-      
-      q = query(
-        collection(db, 'users'),
-        where('name', '>=', searchTerm),
-        where('name', '<=', endStr),
-        limit(20)
-      );
-    } else {
-      // If empty search, just load 20 recent users
-      q = query(
-        collection(db, 'users'),
-        limit(20)
-      );
-    }
-
-    const unsub = onSnapshot(q, (snap) => {
-      const results: any[] = [];
-      snap.forEach(d => {
-        if (d.id !== user?.uid) {
-          results.push({ id: d.id, ...d.data() });
-        }
-      });
-      setUserResults(results);
-      setSearchingUsers(false);
-    }, (err) => {
-      console.error('Error fetching users:', err);
-      setSearchingUsers(false);
+    let cancelled = false;
+    searchPublicUsers({
+      query: searchUsers,
+      limit: 20,
+      excludeIds: user ? [user.uid] : [],
+    }).then((results) => {
+      if (!cancelled) {
+        setUserResults(results.filter(u => !blockedIds.has(u.id) && !blockedByIds.has(u.id)));
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        console.error('Error fetching users:', err);
+        setUserResults([]);
+      }
+    }).finally(() => {
+      if (!cancelled) setSearchingUsers(false);
     });
 
-    return () => unsub();
+    return () => { cancelled = true; };
   }, [searchUsers, showNewDM, user?.uid]);
 
   const handleStartDM = async (otherUserId: string) => {

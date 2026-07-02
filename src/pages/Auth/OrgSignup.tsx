@@ -8,6 +8,7 @@ import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, limit, 
 import { useAuth } from '../../lib/AuthContext';
 import { uploadOrgDocument } from '../../lib/storage';
 import { useToast } from '../../lib/ToastContext';
+import { lookupReferralCode } from '../../lib/discovery';
 
 const ORG_TYPES = [
   { id: 'company' as const, label: 'Company / Business', icon: Briefcase, desc: 'Registered businesses, startups, or enterprises', docHint: 'GSTIN certificate or business registration' },
@@ -182,13 +183,11 @@ export default function OrgSignup() {
         // Apply referral if code is provided
         if (referralCode.trim()) {
           try {
-            const q = query(collection(db, 'users'), where('referralCode', '==', referralCode.trim().toUpperCase()), limit(1));
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-              const referrerDoc = snap.docs[0];
-              userData.referredBy = referrerDoc.id;
+            const referrerId = await lookupReferralCode(referralCode.trim());
+            if (referrerId) {
+              userData.referredBy = referrerId;
               
-              const referralDocRef = doc(db, 'users', referrerDoc.id, 'referrals', firebaseUser.uid);
+              const referralDocRef = doc(db, 'users', referrerId, 'referrals', firebaseUser.uid);
               batch.set(referralDocRef, { timestamp: serverTimestamp() });
             }
           } catch (refErr) {

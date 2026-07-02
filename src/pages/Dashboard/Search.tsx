@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { collection, query, getDocs, limit, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, limit, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Search as SearchIcon, Users, Grid3X3, Package, ArrowRight, Globe, Filter, X, Lock } from 'lucide-react';
 
@@ -26,6 +26,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAllBlockedUserIds } from '../../lib/blocks';
+import { searchDiscovery } from '../../lib/discovery';
 
 
 export default function Search() {
@@ -77,16 +78,12 @@ export default function Search() {
         const fetchSuggestions = async () => {
           setLoading(true);
           try {
-            const [usersSnap, postsSnap, productsSnap, clubsSnap] = await Promise.all([
-              getDocs(query(collection(db, 'users'), limit(200))),
-              getDocs(query(collection(db, 'posts'), limit(5))),
-              getDocs(query(collection(db, 'products'), limit(5))),
+            const [discovery, clubsSnap] = await Promise.all([
+              searchDiscovery({ suggestions: true }),
               getDocs(query(collection(db, 'clubs'), where('type', '==', 'public'), limit(5)))
             ]);
             
-            const allUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-            const fetchedUsers = allUsers
-              .filter((u: any) => u.id !== user?.uid && u.verified === true && !allBlockedIds.has(u.id))
+            const fetchedUsers = discovery.users
               .map((u: any) => {
                 let score = 0;
                 if (userData?.school && u.school === userData.school) score += 100;
@@ -97,8 +94,8 @@ export default function Search() {
               })
               .sort((a: any, b: any) => b._score - a._score)
               .slice(0, 15);
-            const fetchedPosts = postsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((p: any) => !allBlockedIds.has(p.authorId));
-            const fetchedProducts = productsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((p: any) => p.status === 'available' && !allBlockedIds.has(p.sellerId));
+            const fetchedPosts = discovery.posts;
+            const fetchedProducts = discovery.products;
             const fetchedClubs = clubsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
             
             setSuggestedUsers(fetchedUsers);
@@ -118,10 +115,11 @@ export default function Search() {
         };
         fetchSuggestions();
       } else {
-        // Just restore from cache
-        setUsers(suggestedUsers);
-        setPosts(suggestedPosts);
-        setProducts(suggestedProducts);
+        // Restore from cache, re-applying block filters in case they loaded
+        // after the suggestions were first fetched.
+        setUsers(suggestedUsers.filter((u: any) => !allBlockedIds.has(u.id)));
+        setPosts(suggestedPosts.filter((p: any) => !allBlockedIds.has(p.authorId)));
+        setProducts(suggestedProducts.filter((p: any) => !allBlockedIds.has(p.sellerId)));
         setClubs(suggestedClubs);
         setLoading(false);
       }
@@ -132,62 +130,16 @@ export default function Search() {
     const performSearch = async () => {
       setLoading(true);
       try {
-        if (searchQuery.trim().startsWith('@')) {
-          const usernamePrefix = searchQuery.trim().substring(1).toLowerCase();
-          const usersSnap = await getDocs(
-            query(
-              collection(db, 'users'),
-              where('username', '>=', usernamePrefix),
-              where('username', '<=', usernamePrefix + '\uf8ff'),
-              limit(20)
-            )
-          );
-          const fetchedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((u: any) => !allBlockedIds.has(u.id));
-          setUsers(fetchedUsers);
-          setPosts([]);
-          setProducts([]);
-          setClubs([]);
-          setActiveTab('users');
-          return;
-        }
-
-        const userConstraints: any[] = [];
-        if (appliedSchool) userConstraints.push(where('school', '==', appliedSchool));
-        if (appliedLocation) userConstraints.push(where('city', '==', appliedLocation));
-
-        const [usersSnap, postsSnap, productsSnap, clubsSnap] = await Promise.all([
-          getDocs(query(collection(db, 'users'), ...userConstraints, limit(100))),
-          getDocs(query(collection(db, 'posts'), limit(20))),
-          getDocs(query(collection(db, 'products'), limit(20))),
+        const [discovery, clubsSnap] = await Promise.all([
+          searchDiscovery({ query: searchQuery, school: appliedSchool, city: appliedLocation }),
           getDocs(query(collection(db, 'clubs'), where('type', '==', 'public'), limit(20)))
         ]);
 
         const lowerQ = searchQuery.toLowerCase();
 
-        let fetchedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(u => 
-          !allBlockedIds.has(u.id) && (
-          !lowerQ || 
-          (u.name && u.name.toLowerCase().includes(lowerQ)) || 
-          (u.school && u.school.toLowerCase().includes(lowerQ)) ||
-          (u.username && u.username.toLowerCase().includes(lowerQ)))
-        );
-        let fetchedPosts = postsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(p => 
-          !allBlockedIds.has(p.authorId) && (
-          (!lowerQ || 
-          (p.title && p.title.toLowerCase().includes(lowerQ)) || 
-          (p.content && p.content.toLowerCase().includes(lowerQ)) ||
-          (p.school && p.school.toLowerCase().includes(lowerQ))) &&
-          (!appliedSchool || p.school === appliedSchool))
-        );
-        let fetchedProducts = productsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any))
-          .filter((p: any) => p.status === 'available' && !allBlockedIds.has(p.sellerId))
-          .filter(p => 
-            !lowerQ || 
-            (p.title && p.title.toLowerCase().includes(lowerQ)) || 
-            (p.category && p.category.toLowerCase().includes(lowerQ)) ||
-            (p.sellerName && p.sellerName.toLowerCase().includes(lowerQ)) ||
-            (p.tags && p.tags.some((tag: string) => tag.toLowerCase().includes(lowerQ)))
-          );
+        let fetchedUsers = discovery.users;
+        let fetchedPosts = discovery.posts;
+        let fetchedProducts = discovery.products;
         let fetchedClubs = clubsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(c => 
           (!lowerQ || 
           (c.name && c.name.toLowerCase().includes(lowerQ)) || 
@@ -202,6 +154,13 @@ export default function Search() {
           fetchedPosts = fetchedPosts.slice(0, 5);
           fetchedProducts = fetchedProducts.slice(0, 5);
           fetchedClubs = fetchedClubs.slice(0, 5);
+        }
+
+        if (searchQuery.trim().startsWith('@')) {
+          fetchedPosts = [];
+          fetchedProducts = [];
+          fetchedClubs = [];
+          setActiveTab('users');
         }
 
         setUsers(fetchedUsers);
@@ -220,7 +179,7 @@ export default function Search() {
     }, 400); // 400ms debounce
 
     return () => clearTimeout(debounceTimer);
-  }, [searchQuery, appliedSchool, appliedLocation, suggestionsFetched, suggestedUsers, suggestedPosts, suggestedProducts, suggestedClubs]);
+  }, [searchQuery, appliedSchool, appliedLocation, suggestionsFetched, allBlockedIds, user?.uid]);
 
   const toggleFollow = async (e: React.MouseEvent, targetId: string) => {
     e.preventDefault();
@@ -453,7 +412,7 @@ export default function Search() {
                         ) : (
                           <button
                             onClick={(e) => handleJoinClub(e, c.id)}
-                            className="px-4 py-2 rounded-xl text-[10px] font: bold uppercase tracking-widest transition-all shrink-0 bg-luxury-ink text-surface-base hover:bg-brand-mint hover:text-white shadow-md font-bold"
+                            className="px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest transition-all shrink-0 bg-luxury-ink text-surface-base hover:bg-brand-mint hover:text-white shadow-md font-bold"
                           >
                             Join
                           </button>
@@ -617,7 +576,7 @@ export default function Search() {
                     setShowFilters(false);
                     if (activeTab !== 'users') setActiveTab('users'); // Auto-switch to users to show results
                   }}
-                  className="flex-2 py-4 bg-brand-teal text-white text-xs font-bold uppercase tracking-widest rounded-xl shadow-lg shadow-brand-teal/20 hover:bg-brand-teal/90 transition-all active:scale-[0.98]"
+                  className="flex-[2] py-4 bg-brand-teal text-white text-xs font-bold uppercase tracking-widest rounded-xl shadow-lg shadow-brand-teal/20 hover:bg-brand-teal/90 transition-all active:scale-[0.98]"
                 >
                   Done
                 </button>

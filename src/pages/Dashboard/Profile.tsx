@@ -3,7 +3,7 @@ import { ShieldCheck, Star, Package, Settings, MapPin, X, Smartphone, ExternalLi
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/AuthContext';
 import React, { useState, useEffect, useRef } from 'react';
-import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, deleteDoc, getDoc, getDocs, writeBatch, getCountFromServer } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, deleteDoc, getDoc, getDocs, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { useToast } from '../../lib/ToastContext';
@@ -22,6 +22,7 @@ import ProfileSettings from '../../components/ui/ProfileSettings';
 import SEO from '../../components/seo/SEO';
 import { PdfPreview } from '../../components/ui/PdfViewer';
 import VideoPlayer from '../../components/ui/VideoPlayer';
+import { createInviteCode, deletePostCascade, getPublicProfileContent } from '../../lib/discovery';
 
 
 interface UserProduct {
@@ -222,12 +223,14 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
       });
       return () => unsub();
     } else if (effectiveUserId) {
-      // For other profiles, fetch once
+      // For other profiles, fetch block-aware public profile content once.
       const fetchOtherUser = async () => {
         try {
-          const docSnap = await getDoc(doc(db, 'users', effectiveUserId));
-          if (docSnap.exists()) {
-            setProfileUser(docSnap.data());
+          const data = await getPublicProfileContent(effectiveUserId);
+          if (data.user) {
+            setProfileUser(data.user);
+            setMyListings(data.products as UserProduct[]);
+            setMyPosts(data.posts);
           } else {
             showToast('User not found', 'error');
           }
@@ -270,15 +273,9 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
   // Fetch user's listings
   useEffect(() => {
-    if (!targetUserId) return;
+    if (!targetUserId || !isOwnProfile) return;
     
-    let q;
-    if (isOwnProfile) {
-      q = query(collection(db, 'products'), where('sellerId', '==', targetUserId));
-    } else {
-      q = query(collection(db, 'products'), where('sellerId', '==', targetUserId), where('status', 'in', ['available', 'sold']));
-    }
-    
+    const q = query(collection(db, 'products'), where('sellerId', '==', targetUserId));
     const unsub = onSnapshot(q, (snap) => {
       const prods: UserProduct[] = [];
       snap.forEach(d => prods.push({ id: d.id, ...d.data() } as UserProduct));
@@ -291,7 +288,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
 
   // Fetch user's posts
   useEffect(() => {
-    if (!targetUserId) return;
+    if (!targetUserId || !isOwnProfile) return;
     
     const q = query(collection(db, 'posts'), where('authorId', '==', targetUserId));
     const unsub = onSnapshot(q, (snap) => {
@@ -338,22 +335,7 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
     if (!user) return;
     setIsGeneratingCode(true);
     try {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let uniqueCode = '';
-      let isUnique = false;
-      while (!isUnique) {
-        let code = '';
-        for (let i = 0; i < 8; i++) {
-          code += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        const q = query(collection(db, 'users'), where('referralCode', '==', code));
-        const snap = await getDocs(q);
-        if (snap.empty) { uniqueCode = code; isUnique = true; }
-      }
-      await updateDoc(doc(db, 'users', user.uid), {
-        referralCode: uniqueCode,
-        updatedAt: serverTimestamp()
-      });
+      const uniqueCode = await createInviteCode();
       setReferralCode(uniqueCode);
       showToast('Referral code generated!', 'success');
     } catch {
@@ -504,34 +486,8 @@ export default function Profile({ usernameResolvedUserId }: ProfileProps) {
   const handleDeletePost = async (postId: string) => {
     if (!window.confirm('Are you sure you want to delete this post? This will also delete all comments and likes.')) return;
     try {
-      const batch = writeBatch(db);
-      
-      const repliesQ = query(collection(db, 'post_replies'), where('postId', '==', postId));
-      const repliesSnap = await getDocs(repliesQ);
-      repliesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-      
-      const upvotesQ = query(collection(db, 'post_upvotes'), where('postId', '==', postId));
-      const upvotesSnap = await getDocs(upvotesQ);
-      upvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-      const reactionsQ = query(collection(db, 'post_reactions'), where('postId', '==', postId));
-      const reactionsSnap = await getDocs(reactionsQ);
-      reactionsSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-      const downvotesQ = query(collection(db, 'post_downvotes'), where('postId', '==', postId));
-      const downvotesSnap = await getDocs(downvotesQ);
-      downvotesSnap.forEach(docSnap => batch.delete(docSnap.ref));
-
-      // We do not delete notifications here because it violates security rules 
-      // (some notifications might belong to other users), and standard behavior
-      // is to simply show "Post not found" when clicking an old notification.
-      await batch.commit();
-      
-      // Delete the post separately AFTER the batch. If the post is deleted inside
-      // the batch, the security rules evaluating `get()` for the related documents 
-      // will fail because the post is considered deleted during evaluation.
-      await deleteDoc(doc(db, 'posts', postId));
-      
+      await deletePostCascade(postId);
+      setMyPosts(prev => prev.filter(post => post.id !== postId));
       showToast('Post deleted successfully', 'success');
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'posts');

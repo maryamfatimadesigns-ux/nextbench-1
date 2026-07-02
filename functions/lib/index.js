@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.signCloudinary = exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
+exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.deletePostCascade = exports.getLandingStats = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getBlockedUsers = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -10,12 +10,103 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 admin.initializeApp();
 const db = admin.firestore();
+function assertAuthedUid(request) {
+    var _a;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Sign in required.");
+    return uid;
+}
+function serializeValue(value) {
+    if (value instanceof admin.firestore.Timestamp)
+        return value.toMillis();
+    if (Array.isArray(value))
+        return value.map(serializeValue);
+    if (value && typeof value === "object") {
+        const out = {};
+        for (const [key, nested] of Object.entries(value)) {
+            out[key] = serializeValue(nested);
+        }
+        return out;
+    }
+    return value;
+}
+function serializeDoc(doc) {
+    const data = doc.data() || {};
+    return Object.assign({ id: doc.id }, serializeValue(data));
+}
+function publicUserFromDoc(doc) {
+    if (!doc.exists)
+        return null;
+    const data = doc.data() || {};
+    return {
+        id: doc.id,
+        name: typeof data.name === "string" ? data.name : undefined,
+        username: typeof data.username === "string" ? data.username : undefined,
+        school: typeof data.school === "string" ? data.school : undefined,
+        city: typeof data.city === "string" ? data.city : undefined,
+        about: typeof data.about === "string" ? data.about : null,
+        profilePicture: typeof data.profilePicture === "string" ? data.profilePicture : null,
+        coverPhoto: typeof data.coverPhoto === "string" ? data.coverPhoto : null,
+        verified: data.verified === true,
+        reputation: typeof data.reputation === "number" ? data.reputation : undefined,
+        accountType: typeof data.accountType === "string" ? data.accountType : undefined,
+        orgName: typeof data.orgName === "string" ? data.orgName : undefined,
+    };
+}
+async function blockSetFor(uid) {
+    const [blockedSnap, blockedBySnap] = await Promise.all([
+        db.collection("blocks").where("blockerId", "==", uid).get(),
+        db.collection("blocks").where("blockedId", "==", uid).get(),
+    ]);
+    const ids = new Set();
+    blockedSnap.forEach((d) => {
+        const blockedId = d.get("blockedId");
+        if (typeof blockedId === "string")
+            ids.add(blockedId);
+    });
+    blockedBySnap.forEach((d) => {
+        const blockerId = d.get("blockerId");
+        if (typeof blockerId === "string")
+            ids.add(blockerId);
+    });
+    return ids;
+}
+async function hasBlockRelationship(uid1, uid2) {
+    if (!uid1 || !uid2 || uid1 === uid2)
+        return false;
+    const [aBlocksB, bBlocksA] = await Promise.all([
+        db.collection("blocks").doc(`${uid1}_${uid2}`).get(),
+        db.collection("blocks").doc(`${uid2}_${uid1}`).get(),
+    ]);
+    return aBlocksB.exists || bBlocksA.exists;
+}
+async function deleteQueryDocs(queryRef) {
+    const snap = await queryRef.get();
+    let deleted = 0;
+    for (let i = 0; i < snap.docs.length; i += 450) {
+        const batch = db.batch();
+        const chunk = snap.docs.slice(i, i + 450);
+        chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
+        deleted += chunk.length;
+    }
+    return deleted;
+}
+function normalizeSearchTerm(value) {
+    return typeof value === "string" ? value.trim().toLowerCase().slice(0, 80) : "";
+}
+function matchesSearch(value, term) {
+    return typeof value === "string" && value.toLowerCase().includes(term);
+}
+function docMillis(doc, field) {
+    const value = doc.get(field);
+    return value instanceof admin.firestore.Timestamp ? value.toMillis() : 0;
+}
 // ─── Secrets (set via: firebase functions:secrets:set SECRET_NAME) ───────────
 const EMAIL_USER = (0, params_1.defineSecret)("EMAIL_USER");
 const EMAIL_PASS = (0, params_1.defineSecret)("EMAIL_PASS");
 const OTP_HMAC_SECRET = (0, params_1.defineSecret)("OTP_HMAC_SECRET");
-const CLOUDINARY_API_KEY = (0, params_1.defineSecret)("CLOUDINARY_API_KEY");
-const CLOUDINARY_API_SECRET = (0, params_1.defineSecret)("CLOUDINARY_API_SECRET");
 // ─── Disposable / Temp-mail domain blocklist ─────────────────────────────────
 const TEMP_MAIL_DOMAINS = new Set([
     // Major disposable providers
@@ -343,11 +434,24 @@ exports.verifyAuthOtpEmail = (0, https_1.onCall)({ secrets: [OTP_HMAC_SECRET], i
             throw err;
         }
     }
-    // Bypass createCustomToken by setting a strong random password 
-    // and letting the client log in via Email/Password. This avoids IAM signBlob permission issues.
-    const loginPassword = crypto.randomBytes(32).toString("hex");
-    await admin.auth().updateUser(uid, { password: loginPassword });
-    return { loginPassword, email: rawEmail, isNewUser };
+    // Preferred path: mint a custom token so the client can sign in without
+    // touching the user's password. This requires the function's service account
+    // to have the "Service Account Token Creator" role (iam.serviceAccounts.signBlob).
+    try {
+        const customToken = await admin.auth().createCustomToken(uid);
+        return { customToken, email: rawEmail, isNewUser };
+    }
+    catch (tokenErr) {
+        // Fallback (legacy behavior): if custom-token signing is unavailable (missing
+        // IAM signBlob permission), rotate to a strong random password and let the
+        // client log in via Email/Password. Kept so login never breaks while the IAM
+        // role is being provisioned. See thingstofix.md 8.1.
+        console.error("[verifyAuthOtpEmail] createCustomToken failed, falling back to password login. " +
+            "Grant the function service account the 'Service Account Token Creator' role to remove this fallback.", tokenErr);
+        const loginPassword = crypto.randomBytes(32).toString("hex");
+        await admin.auth().updateUser(uid, { password: loginPassword });
+        return { loginPassword, email: rawEmail, isNewUser };
+    }
 });
 // ─── Existing: generateReferralCode ──────────────────────────────────────────
 function generateRandomCode(length) {
@@ -789,11 +893,29 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
         throw new https_1.HttpsError("invalid-argument", "subject and bodyHtml are required.");
     if (subject.length > 200)
         throw new https_1.HttpsError("invalid-argument", "Subject too long.");
-    // Idempotency: prevent double sends
+    if (!broadcastId || typeof broadcastId !== "string") {
+        throw new https_1.HttpsError("invalid-argument", "broadcastId is required.");
+    }
+    // Idempotency: atomically CLAIM the broadcast BEFORE sending. create() fails
+    // if the doc already exists, so a timeout, crash, or client retry can never
+    // re-send to everyone who already received it. (Previously the guard doc was
+    // written only after the whole send loop, so any early exit re-spammed users.)
     const broadcastRef = db.collection("emailBroadcasts").doc(broadcastId);
-    const existing = await broadcastRef.get();
-    if (existing.exists)
-        throw new https_1.HttpsError("already-exists", "This broadcast was already sent.");
+    try {
+        await broadcastRef.create({
+            subject,
+            sentBy: uid,
+            status: "in_progress",
+            startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }
+    catch (err) {
+        // GRPC ALREADY_EXISTS === 6
+        if ((err === null || err === void 0 ? void 0 : err.code) === 6 || (err === null || err === void 0 ? void 0 : err.code) === "already-exists") {
+            throw new https_1.HttpsError("already-exists", "This broadcast was already sent.");
+        }
+        throw err;
+    }
     const usersSnap = await db.collection("users").limit(2000).get();
     const transporter = getTransporter(EMAIL_PASS.value());
     let sent = 0;
@@ -846,9 +968,8 @@ exports.broadcastEmail = (0, https_1.onCall)({ secrets: [EMAIL_PASS], invoker: "
             failed++;
         }
     }
-    await broadcastRef.set({
-        subject,
-        sentBy: uid,
+    await broadcastRef.update({
+        status: "completed",
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         recipientCount: sent,
         failedCount: failed,
@@ -1018,6 +1139,388 @@ async function enforceRateLimit(uid, actionType, limit, windowMs) {
         return true; // Fail-open on rate limiter error to prevent blocking normal users
     }
 }
+async function friendSetFor(uid) {
+    const [followingSnap, followerSnap] = await Promise.all([
+        db.collection("follows").where("followerId", "==", uid).get(),
+        db.collection("follows").where("followingId", "==", uid).get(),
+    ]);
+    const following = new Set();
+    const followers = new Set();
+    followingSnap.forEach((d) => {
+        const id = d.get("followingId");
+        if (typeof id === "string")
+            following.add(id);
+    });
+    followerSnap.forEach((d) => {
+        const id = d.get("followerId");
+        if (typeof id === "string")
+            followers.add(id);
+    });
+    return new Set([...following].filter((id) => followers.has(id)));
+}
+function isVisiblePostData(data, uid, blockedIds, friendIds) {
+    const authorId = typeof data.authorId === "string" ? data.authorId : "";
+    if (!authorId || blockedIds.has(authorId))
+        return false;
+    if (data.status !== "approved" && data.authorId !== uid)
+        return false;
+    if (data.privacy === "private" && data.authorId !== uid && (!uid || !friendIds.has(authorId)))
+        return false;
+    return true;
+}
+async function enrichPosts(docs) {
+    const authorIds = Array.from(new Set(docs.map((d) => d.get("authorId")).filter((id) => typeof id === "string")));
+    const authorDocs = authorIds.length > 0
+        ? await db.getAll(...authorIds.map((id) => db.collection("users").doc(id)))
+        : [];
+    const authorMap = new Map(authorDocs.map((d) => [d.id, d.data() || {}]));
+    return docs.map((docSnap) => {
+        const raw = docSnap.data();
+        const post = serializeDoc(docSnap);
+        const isAnonymous = raw.isAnonymous === true;
+        const author = isAnonymous ? {} : (authorMap.get(raw.authorId) || {});
+        return Object.assign(Object.assign({}, post), { authorName: isAnonymous
+                ? (raw.authorName || raw.personaName || "Anonymous")
+                : (author.name || raw.authorName || "Unknown User"), authorProfilePicture: isAnonymous ? null : (author.profilePicture || raw.authorProfilePicture || null), school: author.school || raw.school || "Unknown School" });
+    });
+}
+async function enrichProducts(docs) {
+    const sellerIds = Array.from(new Set(docs.map((d) => d.get("sellerId")).filter((id) => typeof id === "string")));
+    const sellerDocs = sellerIds.length > 0
+        ? await db.getAll(...sellerIds.map((id) => db.collection("users").doc(id)))
+        : [];
+    const sellerMap = new Map(sellerDocs.map((d) => [d.id, d.data() || {}]));
+    return docs.map((docSnap) => {
+        const raw = docSnap.data();
+        const seller = sellerMap.get(raw.sellerId) || {};
+        return Object.assign(Object.assign({}, serializeDoc(docSnap)), { sellerName: seller.name || raw.sellerName || "Unknown User", sellerSchool: seller.school || raw.sellerSchool || "Unknown School", sellerProfilePicture: seller.profilePicture || raw.sellerProfilePicture || null });
+    });
+}
+exports.getPublicUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const requestedIds = Array.isArray((_a = request.data) === null || _a === void 0 ? void 0 : _a.userIds)
+        ? request.data.userIds.filter((id) => typeof id === "string" && id.length > 0).slice(0, 50)
+        : [];
+    if (requestedIds.length === 0)
+        return { users: [] };
+    const blockedIds = await blockSetFor(uid);
+    const uniqueIds = Array.from(new Set(requestedIds));
+    const docs = await db.getAll(...uniqueIds.map((id) => db.collection("users").doc(id)));
+    const users = docs
+        .filter((d) => d.id === uid || !blockedIds.has(d.id))
+        .map(publicUserFromDoc)
+        .filter((u) => u !== null);
+    return { users };
+});
+exports.getBlockedUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    const uid = assertAuthedUid(request);
+    const blockSnap = await db.collection("blocks")
+        .where("blockerId", "==", uid)
+        .limit(100)
+        .get();
+    if (blockSnap.empty)
+        return { users: [] };
+    const blockedIds = blockSnap.docs
+        .map((docSnap) => docSnap.get("blockedId"))
+        .filter((id) => typeof id === "string" && id.length > 0);
+    const userDocs = await db.getAll(...blockedIds.map((id) => db.collection("users").doc(id)));
+    const userMap = new Map(userDocs.map((docSnap) => [docSnap.id, publicUserFromDoc(docSnap)]));
+    const users = blockSnap.docs.map((blockDocSnap) => {
+        const blockedId = blockDocSnap.get("blockedId");
+        const user = typeof blockedId === "string" ? userMap.get(blockedId) : null;
+        return Object.assign(Object.assign({}, (user || { name: "Deleted user" })), { blockDocId: blockDocSnap.id, id: typeof blockedId === "string" ? blockedId : blockDocSnap.id });
+    });
+    return { users };
+});
+exports.getPublicProfile = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const userId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.userId) === "string" ? request.data.userId : "";
+    if (!userId)
+        throw new https_1.HttpsError("invalid-argument", "Missing userId.");
+    if (uid !== userId && await hasBlockRelationship(uid, userId))
+        return { user: null };
+    const userDoc = await db.collection("users").doc(userId).get();
+    return { user: publicUserFromDoc(userDoc) };
+});
+exports.getPublicProfileContent = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const userId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.userId) === "string" ? request.data.userId : "";
+    if (!userId)
+        throw new https_1.HttpsError("invalid-argument", "Missing userId.");
+    if (uid !== userId && await hasBlockRelationship(uid, userId)) {
+        return { user: null, posts: [], products: [] };
+    }
+    const [userDoc, blockedIds, friendIds, productSnap, postSnap] = await Promise.all([
+        db.collection("users").doc(userId).get(),
+        blockSetFor(uid),
+        friendSetFor(uid),
+        db.collection("products").where("sellerId", "==", userId).limit(120).get(),
+        db.collection("posts").where("authorId", "==", userId).limit(120).get(),
+    ]);
+    if (!userDoc.exists)
+        return { user: null, posts: [], products: [] };
+    const productDocs = productSnap.docs.filter((docSnap) => {
+        const data = docSnap.data();
+        if (uid === userId)
+            return true;
+        return !blockedIds.has(userId) && ["available", "sold"].includes(String(data.status || ""));
+    });
+    const postDocs = postSnap.docs.filter((docSnap) => {
+        const data = docSnap.data();
+        if (uid !== userId && data.isAnonymous === true)
+            return false;
+        return isVisiblePostData(data, uid, blockedIds, friendIds);
+    });
+    productDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+    postDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+    const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+    return { user: publicUserFromDoc(userDoc), posts, products };
+});
+exports.searchPublicUsers = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a, _b, _c;
+    const uid = assertAuthedUid(request);
+    const term = normalizeSearchTerm((_a = request.data) === null || _a === void 0 ? void 0 : _a.query);
+    const max = Math.min(Math.max(Number((_b = request.data) === null || _b === void 0 ? void 0 : _b.limit) || 20, 1), 50);
+    const excludeIds = new Set(Array.isArray((_c = request.data) === null || _c === void 0 ? void 0 : _c.excludeIds)
+        ? request.data.excludeIds.filter((id) => typeof id === "string")
+        : []);
+    const blockedIds = await blockSetFor(uid);
+    let snap;
+    if (term) {
+        const nameTerm = term.charAt(0).toUpperCase() + term.slice(1);
+        snap = await db.collection("users")
+            .where("name", ">=", nameTerm)
+            .where("name", "<=", `${nameTerm}\uf8ff`)
+            .limit(max * 3)
+            .get();
+    }
+    else {
+        snap = await db.collection("users").limit(max * 3).get();
+    }
+    const users = [];
+    snap.forEach((docSnap) => {
+        if (users.length >= max)
+            return;
+        if (docSnap.id === uid || excludeIds.has(docSnap.id) || blockedIds.has(docSnap.id))
+            return;
+        const data = docSnap.data();
+        if (term && !matchesSearch(data.name, term) && !matchesSearch(data.username, term) && !matchesSearch(data.school, term))
+            return;
+        const user = publicUserFromDoc(docSnap);
+        if (user)
+            users.push(user);
+    });
+    return { users };
+});
+exports.lookupReferralCode = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const code = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.code) === "string" ? request.data.code.trim().toUpperCase() : "";
+    if (!code || code.length > 32)
+        throw new https_1.HttpsError("invalid-argument", "Invalid referral code.");
+    const snap = await db.collection("users").where("referralCode", "==", code).limit(1).get();
+    return { userId: snap.empty ? null : snap.docs[0].id };
+});
+exports.isReferralCodeAvailable = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    assertAuthedUid(request);
+    const code = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.code) === "string" ? request.data.code.trim().toUpperCase() : "";
+    if (!code || code.length > 32)
+        throw new https_1.HttpsError("invalid-argument", "Invalid referral code.");
+    const snap = await db.collection("users").where("referralCode", "==", code).limit(1).get();
+    return { available: snap.empty };
+});
+exports.getDiscoveryFeed = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a, _b, _c;
+    const uid = ((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid) || null;
+    const [blockedIds, friendIds] = uid ? await Promise.all([blockSetFor(uid), friendSetFor(uid)]) : [new Set(), new Set()];
+    const postCursor = typeof ((_b = request.data) === null || _b === void 0 ? void 0 : _b.postCreatedAt) === "number" ? request.data.postCreatedAt : null;
+    const productCursor = typeof ((_c = request.data) === null || _c === void 0 ? void 0 : _c.productCreatedAt) === "number" ? request.data.productCreatedAt : null;
+    let postQuery = db.collection("posts")
+        .where("status", "==", "approved")
+        .orderBy("createdAt", "desc")
+        .limit(40);
+    if (postCursor) {
+        postQuery = postQuery.startAfter(admin.firestore.Timestamp.fromMillis(postCursor));
+    }
+    let productQuery = db.collection("products")
+        .where("status", "in", ["available", "sold"])
+        .orderBy("createdAt", "desc")
+        .limit(30);
+    if (productCursor) {
+        productQuery = productQuery.startAfter(admin.firestore.Timestamp.fromMillis(productCursor));
+    }
+    const [postSnap, productSnap] = await Promise.all([postQuery.get(), productQuery.get()]);
+    const visiblePostDocs = postSnap.docs.filter((d) => isVisiblePostData(d.data(), uid, blockedIds, friendIds)).slice(0, 20);
+    const visibleProductDocs = productSnap.docs
+        .filter((d) => {
+        const sellerId = d.get("sellerId");
+        return typeof sellerId === "string" && !blockedIds.has(sellerId);
+    })
+        .slice(0, 10);
+    const [posts, products] = await Promise.all([enrichPosts(visiblePostDocs), enrichProducts(visibleProductDocs)]);
+    return {
+        posts,
+        products,
+        hasMorePosts: postSnap.size === 40,
+        hasMoreProducts: productSnap.size === 30,
+        nextCursor: {
+            postCreatedAt: postSnap.docs.length ? docMillis(postSnap.docs[postSnap.docs.length - 1], "createdAt") : undefined,
+            productCreatedAt: productSnap.docs.length ? docMillis(productSnap.docs[productSnap.docs.length - 1], "createdAt") : undefined,
+        },
+    };
+});
+exports.searchDiscovery = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a, _b, _c, _d, _e;
+    const uid = ((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid) || null;
+    const term = normalizeSearchTerm((_b = request.data) === null || _b === void 0 ? void 0 : _b.query);
+    const school = typeof ((_c = request.data) === null || _c === void 0 ? void 0 : _c.school) === "string" ? request.data.school.trim() : "";
+    const city = typeof ((_d = request.data) === null || _d === void 0 ? void 0 : _d.city) === "string" ? request.data.city.trim() : "";
+    const suggestions = ((_e = request.data) === null || _e === void 0 ? void 0 : _e.suggestions) === true;
+    const [blockedIds, friendIds] = uid ? await Promise.all([blockSetFor(uid), friendSetFor(uid)]) : [new Set(), new Set()];
+    let userQuery = db.collection("users").limit(suggestions ? 200 : 120);
+    if (term.startsWith("@")) {
+        const username = term.slice(1);
+        userQuery = db.collection("users")
+            .where("username", ">=", username)
+            .where("username", "<=", `${username}\uf8ff`)
+            .limit(40);
+    }
+    else if (school) {
+        userQuery = db.collection("users").where("school", "==", school).limit(120);
+    }
+    else if (city) {
+        userQuery = db.collection("users").where("city", "==", city).limit(120);
+    }
+    const [usersSnap, postsSnap, productsSnap] = await Promise.all([
+        userQuery.get(),
+        db.collection("posts").where("status", "==", "approved").orderBy("createdAt", "desc").limit(suggestions ? 20 : 80).get(),
+        db.collection("products").where("status", "==", "available").orderBy("createdAt", "desc").limit(suggestions ? 20 : 80).get(),
+    ]);
+    const users = [];
+    usersSnap.forEach((docSnap) => {
+        if (docSnap.id === uid || blockedIds.has(docSnap.id))
+            return;
+        const data = docSnap.data();
+        if (data.verified !== true)
+            return;
+        if (term && !term.startsWith("@") && !matchesSearch(data.name, term) && !matchesSearch(data.username, term) && !matchesSearch(data.school, term))
+            return;
+        const user = publicUserFromDoc(docSnap);
+        if (user)
+            users.push(user);
+    });
+    const postDocs = postsSnap.docs
+        .filter((d) => {
+        const data = d.data();
+        return isVisiblePostData(data, uid, blockedIds, friendIds)
+            && (!school || data.school === school)
+            && (!term || matchesSearch(data.title, term) || matchesSearch(data.content, term) || matchesSearch(data.school, term));
+    })
+        .slice(0, suggestions ? 5 : 20);
+    const productDocs = productsSnap.docs
+        .filter((d) => {
+        const data = d.data();
+        const sellerId = typeof data.sellerId === "string" ? data.sellerId : "";
+        return sellerId
+            && !blockedIds.has(sellerId)
+            && (!city || data.city === city)
+            && (!term || matchesSearch(data.title, term) || matchesSearch(data.category, term) || matchesSearch(data.sellerName, term));
+    })
+        .slice(0, suggestions ? 5 : 20);
+    const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+    return { users: users.slice(0, suggestions ? 15 : 50), posts, products };
+});
+exports.getPostReplies = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const postId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.postId) === "string" ? request.data.postId : "";
+    if (!postId)
+        throw new https_1.HttpsError("invalid-argument", "Missing postId.");
+    const [blockedIds, friendIds, postDoc] = await Promise.all([
+        blockSetFor(uid),
+        friendSetFor(uid),
+        db.collection("posts").doc(postId).get(),
+    ]);
+    if (!postDoc.exists || !isVisiblePostData(postDoc.data() || {}, uid, blockedIds, friendIds)) {
+        throw new https_1.HttpsError("permission-denied", "Post is not available.");
+    }
+    const snap = await db.collection("post_replies").where("postId", "==", postId).get();
+    const replyDocs = snap.docs.filter((d) => {
+        const authorId = d.get("authorId");
+        return typeof authorId !== "string" || !blockedIds.has(authorId);
+    });
+    replyDocs.sort((a, b) => docMillis(a, "createdAt") - docMillis(b, "createdAt"));
+    const authorIds = Array.from(new Set(replyDocs.map((d) => d.get("authorId")).filter((id) => typeof id === "string")));
+    const authorDocs = authorIds.length > 0
+        ? await db.getAll(...authorIds.map((id) => db.collection("users").doc(id)))
+        : [];
+    const avatarMap = new Map(authorDocs.map((d) => [d.id, d.get("profilePicture") || null]));
+    const replies = replyDocs.map((docSnap) => (Object.assign(Object.assign({}, serializeDoc(docSnap)), { authorProfilePicture: docSnap.get("authorProfilePicture") || avatarMap.get(docSnap.get("authorId")) || null })));
+    return { replies };
+});
+exports.getProductReviews = (0, https_1.onCall)({ invoker: "public", cors: true }, async (request) => {
+    var _a;
+    const uid = assertAuthedUid(request);
+    const productId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.productId) === "string" ? request.data.productId : "";
+    if (!productId)
+        throw new https_1.HttpsError("invalid-argument", "Missing productId.");
+    const productDoc = await db.collection("products").doc(productId).get();
+    if (!productDoc.exists)
+        return { reviews: [] };
+    const sellerId = productDoc.get("sellerId");
+    if (typeof sellerId !== "string" || (uid !== sellerId && await hasBlockRelationship(uid, sellerId))) {
+        return { reviews: [] };
+    }
+    const blockedIds = await blockSetFor(uid);
+    const reviewsSnap = await db.collection("reviews").where("productId", "==", productId).limit(100).get();
+    const reviews = reviewsSnap.docs
+        .filter((docSnap) => {
+        const reviewerId = docSnap.get("reviewerId");
+        return typeof reviewerId !== "string" || reviewerId === uid || !blockedIds.has(reviewerId);
+    })
+        .sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"))
+        .map(serializeDoc);
+    return { reviews };
+});
+exports.getLandingStats = (0, https_1.onCall)({ invoker: "public", cors: true }, async () => {
+    const [usersSnap, productsSnap, schoolsSnap] = await Promise.all([
+        db.collection("users").limit(1000).get(),
+        db.collection("products").limit(1000).get(),
+        db.collection("schools").limit(1000).get(),
+    ]);
+    return {
+        totalUsers: usersSnap.size,
+        totalProducts: productsSnap.size,
+        totalSchools: schoolsSnap.size,
+    };
+});
+exports.deletePostCascade = (0, https_1.onCall)({ invoker: "public", cors: true, timeoutSeconds: 120 }, async (request) => {
+    var _a, _b, _c;
+    const uid = assertAuthedUid(request);
+    const postId = typeof ((_a = request.data) === null || _a === void 0 ? void 0 : _a.postId) === "string" ? request.data.postId : "";
+    if (!postId)
+        throw new https_1.HttpsError("invalid-argument", "Missing postId.");
+    const postRef = db.collection("posts").doc(postId);
+    const postDoc = await postRef.get();
+    if (!postDoc.exists)
+        return { success: true, deleted: { replies: 0, upvotes: 0, downvotes: 0, reactions: 0, saves: 0 } };
+    const authorId = postDoc.get("authorId");
+    if (authorId !== uid && ((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) !== true) {
+        throw new https_1.HttpsError("permission-denied", "Only the post author or an admin can delete this post.");
+    }
+    const [replies, upvotes, downvotes, reactions, saves] = await Promise.all([
+        deleteQueryDocs(db.collection("post_replies").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_upvotes").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_downvotes").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("post_reactions").where("postId", "==", postId)),
+        deleteQueryDocs(db.collection("saved_posts").where("postId", "==", postId)),
+    ]);
+    await postRef.delete();
+    return { success: true, deleted: { replies, upvotes, downvotes, reactions, saves } };
+});
 exports.rateLimitPost = (0, firestore_1.onDocumentCreated)({ document: "posts/{postId}" }, async (event) => {
     var _a;
     const snapshot = event.data;
@@ -1083,6 +1586,7 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: true
     const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
     if (!uid)
         throw new https_1.HttpsError("unauthenticated", "Must be logged in.");
+    const isAdminCaller = ((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) === true;
     const { userId, type, title, message, link, postId } = request.data;
     if (!userId || !type || !title || !message) {
         throw new https_1.HttpsError("invalid-argument", "Missing required fields.");
@@ -1095,9 +1599,12 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: true
     // Restrict administrative/sensitive notification types to actual admin users
     const adminNotifTypes = ['listing_approved', 'listing_rejected', 'admin_promoted', 'user_approved'];
     if (adminNotifTypes.includes(type)) {
-        if (((_c = (_b = request.auth) === null || _b === void 0 ? void 0 : _b.token) === null || _c === void 0 ? void 0 : _c.admin) !== true) {
+        if (!isAdminCaller) {
             throw new https_1.HttpsError("permission-denied", "Only admins can trigger administrative notifications.");
         }
+    }
+    if (!isAdminCaller && uid !== userId && await hasBlockRelationship(uid, userId)) {
+        throw new https_1.HttpsError("permission-denied", "Cannot notify this user.");
     }
     // Check that the recipient user document exists
     const userSnap = await db.collection("users").doc(userId).get();
@@ -1116,62 +1623,5 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: true
         createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     return { success: true, id: notifRef.id };
-});
-// ─── Cloud Function: signCloudinary ──────────────────────────────────────────────
-exports.signCloudinary = (0, https_1.onCall)({ secrets: [CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET], invoker: "public", cors: true }, async (request) => {
-    // 1. Verify Authentication
-    if (!request.auth) {
-        throw new https_1.HttpsError("unauthenticated", "User must be logged in to upload files.");
-    }
-    const uid = request.auth.uid;
-    const { folder, uploadPreset, cloudName } = request.data || {};
-    if (!folder || typeof folder !== "string") {
-        throw new https_1.HttpsError("invalid-argument", "Missing or invalid folder parameter.");
-    }
-    if (!uploadPreset || typeof uploadPreset !== "string") {
-        throw new https_1.HttpsError("invalid-argument", "Missing or invalid uploadPreset parameter.");
-    }
-    if (!cloudName || typeof cloudName !== "string") {
-        throw new https_1.HttpsError("invalid-argument", "Missing or invalid cloudName parameter.");
-    }
-    // 2. Validate Folder (Ensure user can only upload to their own user directories or general shared directories)
-    const isSelfProfile = folder === `nextbench/profiles/${uid}`;
-    const isSelfCover = folder === `nextbench/covers/${uid}`;
-    const isSelfProduct = folder === `nextbench/products/${uid}`;
-    const isGeneralFolder = folder.startsWith("nextbench/chats/") ||
-        folder.startsWith("nextbench/posts/") ||
-        folder.startsWith("nextbench/replies/") ||
-        folder.startsWith("nextbench/school_requests/") ||
-        folder.startsWith("nextbench/org_documents/") ||
-        folder.startsWith("nextbench/clubs/") ||
-        folder.startsWith("nextbench/post_videos/"); // Just in case, though videos use Firebase currently
-    if (!isSelfProfile && !isSelfCover && !isSelfProduct && !isGeneralFolder) {
-        throw new https_1.HttpsError("permission-denied", "Unauthorized folder path access.");
-    }
-    // 3. Generate Cloudinary Signature
-    const apiSecret = CLOUDINARY_API_SECRET.value();
-    const apiKey = CLOUDINARY_API_KEY.value();
-    const timestamp = Math.round(Date.now() / 1000);
-    // Sort and sign parameters
-    const paramsToSign = {
-        folder,
-        timestamp,
-        upload_preset: uploadPreset,
-    };
-    const sortedKeys = Object.keys(paramsToSign).sort();
-    const paramString = sortedKeys
-        .map(key => `${key}=${paramsToSign[key]}`)
-        .join("&");
-    const signature = crypto
-        .createHash("sha1")
-        .update(paramString + apiSecret)
-        .digest("hex");
-    return {
-        signature,
-        timestamp,
-        apiKey,
-        cloudName,
-        folder,
-    };
 });
 //# sourceMappingURL=index.js.map

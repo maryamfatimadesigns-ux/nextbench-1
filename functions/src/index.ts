@@ -9,6 +9,118 @@ import * as nodemailer from "nodemailer";
 admin.initializeApp();
 const db = admin.firestore();
 
+type PublicUser = {
+  id: string;
+  name?: string;
+  username?: string;
+  school?: string;
+  city?: string;
+  about?: string | null;
+  profilePicture?: string | null;
+  coverPhoto?: string | null;
+  verified?: boolean;
+  reputation?: number;
+  accountType?: string;
+  orgName?: string;
+};
+
+type SerializedDoc = Record<string, unknown>;
+
+function assertAuthedUid(request: { auth?: { uid?: string } }): string {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign in required.");
+  return uid;
+}
+
+function serializeValue(value: unknown): unknown {
+  if (value instanceof admin.firestore.Timestamp) return value.toMillis();
+  if (Array.isArray(value)) return value.map(serializeValue);
+  if (value && typeof value === "object") {
+    const out: SerializedDoc = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = serializeValue(nested);
+    }
+    return out;
+  }
+  return value;
+}
+
+function serializeDoc(doc: admin.firestore.QueryDocumentSnapshot | admin.firestore.DocumentSnapshot): SerializedDoc {
+  const data = doc.data() || {};
+  return { id: doc.id, ...serializeValue(data) as SerializedDoc };
+}
+
+function publicUserFromDoc(doc: admin.firestore.DocumentSnapshot): PublicUser | null {
+  if (!doc.exists) return null;
+  const data = doc.data() || {};
+  return {
+    id: doc.id,
+    name: typeof data.name === "string" ? data.name : undefined,
+    username: typeof data.username === "string" ? data.username : undefined,
+    school: typeof data.school === "string" ? data.school : undefined,
+    city: typeof data.city === "string" ? data.city : undefined,
+    about: typeof data.about === "string" ? data.about : null,
+    profilePicture: typeof data.profilePicture === "string" ? data.profilePicture : null,
+    coverPhoto: typeof data.coverPhoto === "string" ? data.coverPhoto : null,
+    verified: data.verified === true,
+    reputation: typeof data.reputation === "number" ? data.reputation : undefined,
+    accountType: typeof data.accountType === "string" ? data.accountType : undefined,
+    orgName: typeof data.orgName === "string" ? data.orgName : undefined,
+  };
+}
+
+async function blockSetFor(uid: string): Promise<Set<string>> {
+  const [blockedSnap, blockedBySnap] = await Promise.all([
+    db.collection("blocks").where("blockerId", "==", uid).get(),
+    db.collection("blocks").where("blockedId", "==", uid).get(),
+  ]);
+  const ids = new Set<string>();
+  blockedSnap.forEach((d) => {
+    const blockedId = d.get("blockedId");
+    if (typeof blockedId === "string") ids.add(blockedId);
+  });
+  blockedBySnap.forEach((d) => {
+    const blockerId = d.get("blockerId");
+    if (typeof blockerId === "string") ids.add(blockerId);
+  });
+  return ids;
+}
+
+async function hasBlockRelationship(uid1: string, uid2: string): Promise<boolean> {
+  if (!uid1 || !uid2 || uid1 === uid2) return false;
+  const [aBlocksB, bBlocksA] = await Promise.all([
+    db.collection("blocks").doc(`${uid1}_${uid2}`).get(),
+    db.collection("blocks").doc(`${uid2}_${uid1}`).get(),
+  ]);
+  return aBlocksB.exists || bBlocksA.exists;
+}
+
+async function deleteQueryDocs(queryRef: admin.firestore.Query): Promise<number> {
+  const snap = await queryRef.get();
+  let deleted = 0;
+  for (let i = 0; i < snap.docs.length; i += 450) {
+    const batch = db.batch();
+    const chunk = snap.docs.slice(i, i + 450);
+    chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    deleted += chunk.length;
+  }
+  return deleted;
+}
+
+function normalizeSearchTerm(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase().slice(0, 80) : "";
+}
+
+function matchesSearch(value: unknown, term: string): boolean {
+  return typeof value === "string" && value.toLowerCase().includes(term);
+}
+
+function docMillis(doc: admin.firestore.QueryDocumentSnapshot, field: string): number {
+  const value = doc.get(field);
+  return value instanceof admin.firestore.Timestamp ? value.toMillis() : 0;
+}
+
 // ─── Secrets (set via: firebase functions:secrets:set SECRET_NAME) ───────────
 const EMAIL_USER      = defineSecret("EMAIL_USER");
 const EMAIL_PASS      = defineSecret("EMAIL_PASS");
@@ -383,12 +495,26 @@ export const verifyAuthOtpEmail = onCall(
       }
     }
 
-    // Bypass createCustomToken by setting a strong random password 
-    // and letting the client log in via Email/Password. This avoids IAM signBlob permission issues.
-    const loginPassword = crypto.randomBytes(32).toString("hex");
-    await admin.auth().updateUser(uid, { password: loginPassword });
-
-    return { loginPassword, email: rawEmail, isNewUser };
+    // Preferred path: mint a custom token so the client can sign in without
+    // touching the user's password. This requires the function's service account
+    // to have the "Service Account Token Creator" role (iam.serviceAccounts.signBlob).
+    try {
+      const customToken = await admin.auth().createCustomToken(uid);
+      return { customToken, email: rawEmail, isNewUser };
+    } catch (tokenErr) {
+      // Fallback (legacy behavior): if custom-token signing is unavailable (missing
+      // IAM signBlob permission), rotate to a strong random password and let the
+      // client log in via Email/Password. Kept so login never breaks while the IAM
+      // role is being provisioned. See thingstofix.md 8.1.
+      console.error(
+        "[verifyAuthOtpEmail] createCustomToken failed, falling back to password login. " +
+        "Grant the function service account the 'Service Account Token Creator' role to remove this fallback.",
+        tokenErr
+      );
+      const loginPassword = crypto.randomBytes(32).toString("hex");
+      await admin.auth().updateUser(uid, { password: loginPassword });
+      return { loginPassword, email: rawEmail, isNewUser };
+    }
   }
 );
 
@@ -897,10 +1023,29 @@ export const broadcastEmail = onCall(
     if (!subject || !bodyHtml) throw new HttpsError("invalid-argument", "subject and bodyHtml are required.");
     if (subject.length > 200) throw new HttpsError("invalid-argument", "Subject too long.");
 
-    // Idempotency: prevent double sends
+    if (!broadcastId || typeof broadcastId !== "string") {
+      throw new HttpsError("invalid-argument", "broadcastId is required.");
+    }
+
+    // Idempotency: atomically CLAIM the broadcast BEFORE sending. create() fails
+    // if the doc already exists, so a timeout, crash, or client retry can never
+    // re-send to everyone who already received it. (Previously the guard doc was
+    // written only after the whole send loop, so any early exit re-spammed users.)
     const broadcastRef = db.collection("emailBroadcasts").doc(broadcastId);
-    const existing = await broadcastRef.get();
-    if (existing.exists) throw new HttpsError("already-exists", "This broadcast was already sent.");
+    try {
+      await broadcastRef.create({
+        subject,
+        sentBy: uid,
+        status: "in_progress",
+        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (err: any) {
+      // GRPC ALREADY_EXISTS === 6
+      if (err?.code === 6 || err?.code === "already-exists") {
+        throw new HttpsError("already-exists", "This broadcast was already sent.");
+      }
+      throw err;
+    }
 
     const usersSnap = await db.collection("users").limit(2000).get();
     const transporter = getTransporter(EMAIL_PASS.value());
@@ -958,9 +1103,8 @@ export const broadcastEmail = onCall(
       }
     }
 
-    await broadcastRef.set({
-      subject,
-      sentBy: uid,
+    await broadcastRef.update({
+      status: "completed",
       sentAt: admin.firestore.FieldValue.serverTimestamp(),
       recipientCount: sent,
       failedCount: failed,
@@ -1145,14 +1289,428 @@ async function enforceRateLimit(uid: string, actionType: string, limit: number, 
             transaction.update(rateLimitRef, { count: data.count + 1 });
           }
         }
-      }
-    });
+  }
+});
+
     return allowed;
   } catch (err) {
     console.error(`Rate limit check failed for ${uid} (${actionType}):`, err);
     return true; // Fail-open on rate limiter error to prevent blocking normal users
   }
 }
+
+async function friendSetFor(uid: string): Promise<Set<string>> {
+  const [followingSnap, followerSnap] = await Promise.all([
+    db.collection("follows").where("followerId", "==", uid).get(),
+    db.collection("follows").where("followingId", "==", uid).get(),
+  ]);
+  const following = new Set<string>();
+  const followers = new Set<string>();
+  followingSnap.forEach((d) => {
+    const id = d.get("followingId");
+    if (typeof id === "string") following.add(id);
+  });
+  followerSnap.forEach((d) => {
+    const id = d.get("followerId");
+    if (typeof id === "string") followers.add(id);
+  });
+  return new Set([...following].filter((id) => followers.has(id)));
+}
+
+function isVisiblePostData(data: admin.firestore.DocumentData, uid: string | null, blockedIds: Set<string>, friendIds: Set<string>): boolean {
+  const authorId = typeof data.authorId === "string" ? data.authorId : "";
+  if (!authorId || blockedIds.has(authorId)) return false;
+  if (data.status !== "approved" && data.authorId !== uid) return false;
+  if (data.privacy === "private" && data.authorId !== uid && (!uid || !friendIds.has(authorId))) return false;
+  return true;
+}
+
+async function enrichPosts(docs: admin.firestore.QueryDocumentSnapshot[]): Promise<SerializedDoc[]> {
+  const authorIds = Array.from(new Set(docs.map((d) => d.get("authorId")).filter((id): id is string => typeof id === "string")));
+  const authorDocs = authorIds.length > 0
+    ? await db.getAll(...authorIds.map((id) => db.collection("users").doc(id)))
+    : [];
+  const authorMap = new Map(authorDocs.map((d) => [d.id, d.data() || {}]));
+
+  return docs.map((docSnap) => {
+    const raw = docSnap.data();
+    const post = serializeDoc(docSnap);
+    const isAnonymous = raw.isAnonymous === true;
+    const author = isAnonymous ? {} : (authorMap.get(raw.authorId) || {});
+    return {
+      ...post,
+      authorName: isAnonymous
+        ? (raw.authorName || raw.personaName || "Anonymous")
+        : (author.name || raw.authorName || "Unknown User"),
+      authorProfilePicture: isAnonymous ? null : (author.profilePicture || raw.authorProfilePicture || null),
+      school: author.school || raw.school || "Unknown School",
+    };
+  });
+}
+
+async function enrichProducts(docs: admin.firestore.QueryDocumentSnapshot[]): Promise<SerializedDoc[]> {
+  const sellerIds = Array.from(new Set(docs.map((d) => d.get("sellerId")).filter((id): id is string => typeof id === "string")));
+  const sellerDocs = sellerIds.length > 0
+    ? await db.getAll(...sellerIds.map((id) => db.collection("users").doc(id)))
+    : [];
+  const sellerMap = new Map(sellerDocs.map((d) => [d.id, d.data() || {}]));
+
+  return docs.map((docSnap) => {
+    const raw = docSnap.data();
+    const seller = sellerMap.get(raw.sellerId) || {};
+    return {
+      ...serializeDoc(docSnap),
+      sellerName: seller.name || raw.sellerName || "Unknown User",
+      sellerSchool: seller.school || raw.sellerSchool || "Unknown School",
+      sellerProfilePicture: seller.profilePicture || raw.sellerProfilePicture || null,
+    };
+  });
+}
+
+export const getPublicUsers = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const requestedIds = Array.isArray(request.data?.userIds)
+    ? request.data.userIds.filter((id: unknown): id is string => typeof id === "string" && id.length > 0).slice(0, 50)
+    : [];
+  if (requestedIds.length === 0) return { users: [] };
+
+  const blockedIds = await blockSetFor(uid);
+  const uniqueIds: string[] = Array.from(new Set<string>(requestedIds));
+  const docs = await db.getAll(...uniqueIds.map((id) => db.collection("users").doc(id)));
+  const users = docs
+    .filter((d) => d.id === uid || !blockedIds.has(d.id))
+    .map(publicUserFromDoc)
+    .filter((u): u is PublicUser => u !== null);
+  return { users };
+});
+
+export const getBlockedUsers = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const blockSnap = await db.collection("blocks")
+    .where("blockerId", "==", uid)
+    .limit(100)
+    .get();
+
+  if (blockSnap.empty) return { users: [] };
+
+  const blockedIds = blockSnap.docs
+    .map((docSnap) => docSnap.get("blockedId"))
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  const userDocs = await db.getAll(...blockedIds.map((id) => db.collection("users").doc(id)));
+  const userMap = new Map(userDocs.map((docSnap) => [docSnap.id, publicUserFromDoc(docSnap)]));
+  const users = blockSnap.docs.map((blockDocSnap) => {
+    const blockedId = blockDocSnap.get("blockedId");
+    const user = typeof blockedId === "string" ? userMap.get(blockedId) : null;
+    return {
+      ...(user || { name: "Deleted user" }),
+      blockDocId: blockDocSnap.id,
+      id: typeof blockedId === "string" ? blockedId : blockDocSnap.id,
+    };
+  });
+
+  return { users };
+});
+
+export const getPublicProfile = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const userId = typeof request.data?.userId === "string" ? request.data.userId : "";
+  if (!userId) throw new HttpsError("invalid-argument", "Missing userId.");
+  if (uid !== userId && await hasBlockRelationship(uid, userId)) return { user: null };
+  const userDoc = await db.collection("users").doc(userId).get();
+  return { user: publicUserFromDoc(userDoc) };
+});
+
+export const getPublicProfileContent = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const userId = typeof request.data?.userId === "string" ? request.data.userId : "";
+  if (!userId) throw new HttpsError("invalid-argument", "Missing userId.");
+  if (uid !== userId && await hasBlockRelationship(uid, userId)) {
+    return { user: null, posts: [], products: [] };
+  }
+
+  const [userDoc, blockedIds, friendIds, productSnap, postSnap] = await Promise.all([
+    db.collection("users").doc(userId).get(),
+    blockSetFor(uid),
+    friendSetFor(uid),
+    db.collection("products").where("sellerId", "==", userId).limit(120).get(),
+    db.collection("posts").where("authorId", "==", userId).limit(120).get(),
+  ]);
+
+  if (!userDoc.exists) return { user: null, posts: [], products: [] };
+
+  const productDocs = productSnap.docs.filter((docSnap) => {
+    const data = docSnap.data();
+    if (uid === userId) return true;
+    return !blockedIds.has(userId) && ["available", "sold"].includes(String(data.status || ""));
+  });
+
+  const postDocs = postSnap.docs.filter((docSnap) => {
+    const data = docSnap.data();
+    if (uid !== userId && data.isAnonymous === true) return false;
+    return isVisiblePostData(data, uid, blockedIds, friendIds);
+  });
+
+  productDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+  postDocs.sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"));
+
+  const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+  return { user: publicUserFromDoc(userDoc), posts, products };
+});
+
+export const searchPublicUsers = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const term = normalizeSearchTerm(request.data?.query);
+  const max = Math.min(Math.max(Number(request.data?.limit) || 20, 1), 50);
+  const excludeIds = new Set(
+    Array.isArray(request.data?.excludeIds)
+      ? request.data.excludeIds.filter((id: unknown): id is string => typeof id === "string")
+      : []
+  );
+  const blockedIds = await blockSetFor(uid);
+
+  let snap: admin.firestore.QuerySnapshot;
+  if (term) {
+    const nameTerm = term.charAt(0).toUpperCase() + term.slice(1);
+    snap = await db.collection("users")
+      .where("name", ">=", nameTerm)
+      .where("name", "<=", `${nameTerm}\uf8ff`)
+      .limit(max * 3)
+      .get();
+  } else {
+    snap = await db.collection("users").limit(max * 3).get();
+  }
+
+  const users: PublicUser[] = [];
+  snap.forEach((docSnap) => {
+    if (users.length >= max) return;
+    if (docSnap.id === uid || excludeIds.has(docSnap.id) || blockedIds.has(docSnap.id)) return;
+    const data = docSnap.data();
+    if (term && !matchesSearch(data.name, term) && !matchesSearch(data.username, term) && !matchesSearch(data.school, term)) return;
+    const user = publicUserFromDoc(docSnap);
+    if (user) users.push(user);
+  });
+  return { users };
+});
+
+export const lookupReferralCode = onCall({ invoker: "public", cors: true }, async (request) => {
+  const code = typeof request.data?.code === "string" ? request.data.code.trim().toUpperCase() : "";
+  if (!code || code.length > 32) throw new HttpsError("invalid-argument", "Invalid referral code.");
+  const snap = await db.collection("users").where("referralCode", "==", code).limit(1).get();
+  return { userId: snap.empty ? null : snap.docs[0].id };
+});
+
+export const isReferralCodeAvailable = onCall({ invoker: "public", cors: true }, async (request) => {
+  assertAuthedUid(request);
+  const code = typeof request.data?.code === "string" ? request.data.code.trim().toUpperCase() : "";
+  if (!code || code.length > 32) throw new HttpsError("invalid-argument", "Invalid referral code.");
+  const snap = await db.collection("users").where("referralCode", "==", code).limit(1).get();
+  return { available: snap.empty };
+});
+
+export const getDiscoveryFeed = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = request.auth?.uid || null;
+  const [blockedIds, friendIds] = uid ? await Promise.all([blockSetFor(uid), friendSetFor(uid)]) : [new Set<string>(), new Set<string>()];
+  const postCursor = typeof request.data?.postCreatedAt === "number" ? request.data.postCreatedAt : null;
+  const productCursor = typeof request.data?.productCreatedAt === "number" ? request.data.productCreatedAt : null;
+
+  let postQuery = db.collection("posts")
+    .where("status", "==", "approved")
+    .orderBy("createdAt", "desc")
+    .limit(40);
+  if (postCursor) {
+    postQuery = postQuery.startAfter(admin.firestore.Timestamp.fromMillis(postCursor));
+  }
+
+  let productQuery = db.collection("products")
+    .where("status", "in", ["available", "sold"])
+    .orderBy("createdAt", "desc")
+    .limit(30);
+  if (productCursor) {
+    productQuery = productQuery.startAfter(admin.firestore.Timestamp.fromMillis(productCursor));
+  }
+
+  const [postSnap, productSnap] = await Promise.all([postQuery.get(), productQuery.get()]);
+  const visiblePostDocs = postSnap.docs.filter((d) => isVisiblePostData(d.data(), uid, blockedIds, friendIds)).slice(0, 20);
+  const visibleProductDocs = productSnap.docs
+    .filter((d) => {
+      const sellerId = d.get("sellerId");
+      return typeof sellerId === "string" && !blockedIds.has(sellerId);
+    })
+    .slice(0, 10);
+
+  const [posts, products] = await Promise.all([enrichPosts(visiblePostDocs), enrichProducts(visibleProductDocs)]);
+  return {
+    posts,
+    products,
+    hasMorePosts: postSnap.size === 40,
+    hasMoreProducts: productSnap.size === 30,
+    nextCursor: {
+      postCreatedAt: postSnap.docs.length ? docMillis(postSnap.docs[postSnap.docs.length - 1], "createdAt") : undefined,
+      productCreatedAt: productSnap.docs.length ? docMillis(productSnap.docs[productSnap.docs.length - 1], "createdAt") : undefined,
+    },
+  };
+});
+
+export const searchDiscovery = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = request.auth?.uid || null;
+  const term = normalizeSearchTerm(request.data?.query);
+  const school = typeof request.data?.school === "string" ? request.data.school.trim() : "";
+  const city = typeof request.data?.city === "string" ? request.data.city.trim() : "";
+  const suggestions = request.data?.suggestions === true;
+  const [blockedIds, friendIds] = uid ? await Promise.all([blockSetFor(uid), friendSetFor(uid)]) : [new Set<string>(), new Set<string>()];
+
+  let userQuery = db.collection("users").limit(suggestions ? 200 : 120);
+  if (term.startsWith("@")) {
+    const username = term.slice(1);
+    userQuery = db.collection("users")
+      .where("username", ">=", username)
+      .where("username", "<=", `${username}\uf8ff`)
+      .limit(40);
+  } else if (school) {
+    userQuery = db.collection("users").where("school", "==", school).limit(120);
+  } else if (city) {
+    userQuery = db.collection("users").where("city", "==", city).limit(120);
+  }
+
+  const [usersSnap, postsSnap, productsSnap] = await Promise.all([
+    userQuery.get(),
+    db.collection("posts").where("status", "==", "approved").orderBy("createdAt", "desc").limit(suggestions ? 20 : 80).get(),
+    db.collection("products").where("status", "==", "available").orderBy("createdAt", "desc").limit(suggestions ? 20 : 80).get(),
+  ]);
+
+  const users: PublicUser[] = [];
+  usersSnap.forEach((docSnap) => {
+    if (docSnap.id === uid || blockedIds.has(docSnap.id)) return;
+    const data = docSnap.data();
+    if (data.verified !== true) return;
+    if (term && !term.startsWith("@") && !matchesSearch(data.name, term) && !matchesSearch(data.username, term) && !matchesSearch(data.school, term)) return;
+    const user = publicUserFromDoc(docSnap);
+    if (user) users.push(user);
+  });
+
+  const postDocs = postsSnap.docs
+    .filter((d) => {
+      const data = d.data();
+      return isVisiblePostData(data, uid, blockedIds, friendIds)
+        && (!school || data.school === school)
+        && (!term || matchesSearch(data.title, term) || matchesSearch(data.content, term) || matchesSearch(data.school, term));
+    })
+    .slice(0, suggestions ? 5 : 20);
+
+  const productDocs = productsSnap.docs
+    .filter((d) => {
+      const data = d.data();
+      const sellerId = typeof data.sellerId === "string" ? data.sellerId : "";
+      return sellerId
+        && !blockedIds.has(sellerId)
+        && (!city || data.city === city)
+        && (!term || matchesSearch(data.title, term) || matchesSearch(data.category, term) || matchesSearch(data.sellerName, term));
+    })
+    .slice(0, suggestions ? 5 : 20);
+
+  const [posts, products] = await Promise.all([enrichPosts(postDocs), enrichProducts(productDocs)]);
+  return { users: users.slice(0, suggestions ? 15 : 50), posts, products };
+});
+
+export const getPostReplies = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const postId = typeof request.data?.postId === "string" ? request.data.postId : "";
+  if (!postId) throw new HttpsError("invalid-argument", "Missing postId.");
+
+  const [blockedIds, friendIds, postDoc] = await Promise.all([
+    blockSetFor(uid),
+    friendSetFor(uid),
+    db.collection("posts").doc(postId).get(),
+  ]);
+  if (!postDoc.exists || !isVisiblePostData(postDoc.data() || {}, uid, blockedIds, friendIds)) {
+    throw new HttpsError("permission-denied", "Post is not available.");
+  }
+
+  const snap = await db.collection("post_replies").where("postId", "==", postId).get();
+  const replyDocs = snap.docs.filter((d) => {
+    const authorId = d.get("authorId");
+    return typeof authorId !== "string" || !blockedIds.has(authorId);
+  });
+  replyDocs.sort((a, b) => docMillis(a, "createdAt") - docMillis(b, "createdAt"));
+
+  const authorIds = Array.from(new Set(replyDocs.map((d) => d.get("authorId")).filter((id): id is string => typeof id === "string")));
+  const authorDocs = authorIds.length > 0
+    ? await db.getAll(...authorIds.map((id) => db.collection("users").doc(id)))
+    : [];
+  const avatarMap = new Map(authorDocs.map((d) => [d.id, d.get("profilePicture") || null]));
+
+  const replies = replyDocs.map((docSnap) => ({
+    ...serializeDoc(docSnap),
+    authorProfilePicture: docSnap.get("authorProfilePicture") || avatarMap.get(docSnap.get("authorId")) || null,
+  }));
+  return { replies };
+});
+
+export const getProductReviews = onCall({ invoker: "public", cors: true }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const productId = typeof request.data?.productId === "string" ? request.data.productId : "";
+  if (!productId) throw new HttpsError("invalid-argument", "Missing productId.");
+
+  const productDoc = await db.collection("products").doc(productId).get();
+  if (!productDoc.exists) return { reviews: [] };
+
+  const sellerId = productDoc.get("sellerId");
+  if (typeof sellerId !== "string" || (uid !== sellerId && await hasBlockRelationship(uid, sellerId))) {
+    return { reviews: [] };
+  }
+
+  const blockedIds = await blockSetFor(uid);
+  const reviewsSnap = await db.collection("reviews").where("productId", "==", productId).limit(100).get();
+  const reviews = reviewsSnap.docs
+    .filter((docSnap) => {
+      const reviewerId = docSnap.get("reviewerId");
+      return typeof reviewerId !== "string" || reviewerId === uid || !blockedIds.has(reviewerId);
+    })
+    .sort((a, b) => docMillis(b, "createdAt") - docMillis(a, "createdAt"))
+    .map(serializeDoc);
+
+  return { reviews };
+});
+
+export const getLandingStats = onCall({ invoker: "public", cors: true }, async () => {
+  const [usersSnap, productsSnap, schoolsSnap] = await Promise.all([
+    db.collection("users").limit(1000).get(),
+    db.collection("products").limit(1000).get(),
+    db.collection("schools").limit(1000).get(),
+  ]);
+  return {
+    totalUsers: usersSnap.size,
+    totalProducts: productsSnap.size,
+    totalSchools: schoolsSnap.size,
+  };
+});
+
+export const deletePostCascade = onCall({ invoker: "public", cors: true, timeoutSeconds: 120 }, async (request) => {
+  const uid = assertAuthedUid(request);
+  const postId = typeof request.data?.postId === "string" ? request.data.postId : "";
+  if (!postId) throw new HttpsError("invalid-argument", "Missing postId.");
+
+  const postRef = db.collection("posts").doc(postId);
+  const postDoc = await postRef.get();
+  if (!postDoc.exists) return { success: true, deleted: { replies: 0, upvotes: 0, downvotes: 0, reactions: 0, saves: 0 } };
+
+  const authorId = postDoc.get("authorId");
+  if (authorId !== uid && request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Only the post author or an admin can delete this post.");
+  }
+
+  const [replies, upvotes, downvotes, reactions, saves] = await Promise.all([
+    deleteQueryDocs(db.collection("post_replies").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_upvotes").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_downvotes").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("post_reactions").where("postId", "==", postId)),
+    deleteQueryDocs(db.collection("saved_posts").where("postId", "==", postId)),
+  ]);
+
+  await postRef.delete();
+  return { success: true, deleted: { replies, upvotes, downvotes, reactions, saves } };
+});
 
 export const rateLimitPost = onDocumentCreated(
   { document: "posts/{postId}" },
@@ -1226,6 +1784,7 @@ export const rateLimitReply = onDocumentCreated(
 export const createNotification = onCall({ invoker: "public", cors: true }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Must be logged in.");
+  const isAdminCaller = request.auth?.token?.admin === true;
 
   const { userId, type, title, message, link, postId } = request.data as {
     userId: string;
@@ -1249,9 +1808,13 @@ export const createNotification = onCall({ invoker: "public", cors: true }, asyn
   // Restrict administrative/sensitive notification types to actual admin users
   const adminNotifTypes = ['listing_approved', 'listing_rejected', 'admin_promoted', 'user_approved'];
   if (adminNotifTypes.includes(type)) {
-    if (request.auth?.token?.admin !== true) {
+    if (!isAdminCaller) {
       throw new HttpsError("permission-denied", "Only admins can trigger administrative notifications.");
     }
+  }
+
+  if (!isAdminCaller && uid !== userId && await hasBlockRelationship(uid, userId)) {
+    throw new HttpsError("permission-denied", "Cannot notify this user.");
   }
 
   // Check that the recipient user document exists

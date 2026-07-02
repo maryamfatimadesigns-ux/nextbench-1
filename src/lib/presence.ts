@@ -11,7 +11,7 @@
  * "Recently active" = lastSeen < 5 min ago.
  */
 
-import { collection, doc, query, updateDoc, serverTimestamp, onSnapshot, where } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { db } from './firebase';
 
@@ -191,27 +191,7 @@ export function useOnlineCount(currentUid?: string | null): number {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'users'),
-      where('online', '==', true)
-    );
-
-    const unsub = onSnapshot(q, { includeMetadataChanges: false }, (snap) => {
-      const now = Date.now();
-      let total = 0;
-      snap.forEach(docSnap => {
-        if (docSnap.id === currentUid) return;
-        const data = docSnap.data();
-        const lastSeen: Date | null = data?.lastSeen?.toDate?.() ?? null;
-        const msSince = lastSeen ? now - lastSeen.getTime() : Infinity;
-        if (msSince < ONLINE_THRESHOLD_MS) total++;
-      });
-      setCount(total);
-    }, (err) => {
-      console.warn('presence: online count listener error (ignored):', err);
-    });
-
-    return unsub;
+    setCount(0);
   }, [currentUid]);
 
   return count;

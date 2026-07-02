@@ -5,9 +5,10 @@
  * and sends notifications to mentioned users.
  */
 
-import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { createNotification } from './notifications';
+import { getPublicProfile, searchPublicUsers } from './discovery';
 
 /**
  * Extract all @username mentions from text.
@@ -43,11 +44,11 @@ export async function resolveMentionUsers(
         const usernameDoc = await getDoc(doc(db, 'usernames', username));
         if (usernameDoc.exists()) {
           const userId = usernameDoc.data().userId;
-          const userDoc = await getDoc(doc(db, 'users', userId));
-          if (userDoc.exists()) {
+          const userDoc = await getPublicProfile(userId);
+          if (userDoc) {
             results.push({
               userId,
-              name: userDoc.data().name || 'User',
+              name: userDoc.name || 'User',
               username,
             });
           }
@@ -72,32 +73,19 @@ export async function searchUsersForMention(
 ): Promise<{ id: string; name: string; username?: string; profilePicture?: string; school?: string }[]> {
   if (!searchTerm || searchTerm.length < 1) return [];
 
-  const capitalised = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1).toLowerCase();
-
-  const q = query(
-    collection(db, 'users'),
-    where('name', '>=', capitalised),
-    where('name', '<=', capitalised + '\uf8ff'),
-    limit(maxResults + 1) // +1 to account for self-exclusion
-  );
-
-  const snap = await getDocs(q);
-  const results: { id: string; name: string; username?: string; profilePicture?: string; school?: string }[] = [];
-
-  snap.forEach((d) => {
-    if (d.id !== currentUserId && results.length < maxResults) {
-      const data = d.data();
-      results.push({
-        id: d.id,
-        name: data.name || 'User',
-        username: data.username || undefined,
-        profilePicture: data.profilePicture || undefined,
-        school: data.school || undefined,
-      });
-    }
+  const users = await searchPublicUsers({
+    query: searchTerm,
+    limit: maxResults,
+    excludeIds: [currentUserId],
   });
 
-  return results;
+  return users.map(user => ({
+    id: user.id,
+    name: user.name || 'User',
+    username: user.username || undefined,
+    profilePicture: user.profilePicture || undefined,
+    school: user.school || undefined,
+  }));
 }
 
 /**

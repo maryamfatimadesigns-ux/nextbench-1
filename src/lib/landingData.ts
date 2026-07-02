@@ -1,5 +1,6 @@
-import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, getDocs, query, limit } from 'firebase/firestore';
 import { db } from './firebase';
+import { getDiscoveryFeed, getLandingStats as getLandingStatsCallable } from './discovery';
 
 export interface RealSchool {
   name: string;
@@ -180,31 +181,9 @@ export async function fetchLandingUsers(): Promise<RealUser[]> {
   const cached = getFromCache<RealUser[]>('users');
   if (cached) return cached;
 
-  try {
-    const snap = await getDocs(
-      query(
-        collection(db, 'users'),
-        where('verified', '==', true),
-        where('profilePicture', '!=', null),
-        limit(60)
-      )
-    );
-    if (!snap.empty) {
-      const data = snap.docs.map(d => {
-        const u = d.data();
-        return {
-          id: d.id,
-          name: u.name || 'Student',
-          school: u.school || '',
-          reputation: u.reputation || 5.0,
-          profilePicture: u.profilePicture || undefined,
-        };
-      });
-      setCache('users', data);
-      return data;
-    }
-  } catch {}
-  return generateSeedUsers(40);
+  const seeds = generateSeedUsers(40);
+  setCache('users', seeds);
+  return seeds;
 }
 
 export async function fetchVerifiedUserCount(): Promise<number> {
@@ -212,10 +191,8 @@ export async function fetchVerifiedUserCount(): Promise<number> {
   if (cached !== null) return cached;
 
   try {
-    const snap = await getDocs(
-      query(collection(db, 'users'), where('verified', '==', true), limit(1000))
-    );
-    const count = snap.size;
+    const stats = await getLandingStatsCallable();
+    const count = stats.totalUsers;
     if (count > 0) {
       setCache('verifiedCount', count);
       return count;
@@ -229,28 +206,18 @@ export async function fetchRecentProducts(): Promise<RealProduct[]> {
   if (cached) return cached;
 
   try {
-    const snap = await getDocs(
-      query(
-        collection(db, 'products'),
-        where('status', '==', 'available'),
-        orderBy('createdAt', 'desc'),
-        limit(30)
-      )
-    );
-    if (!snap.empty) {
-      const data = snap.docs.map(d => {
-        const p = d.data();
-        return {
-          id: d.id,
-          title: p.title,
-          price: p.price,
-          condition: p.condition,
-          category: p.category,
-          sellerName: p.sellerName,
-          sellerSchool: p.sellerSchool,
-          image: p.image || undefined,
-        };
-      });
+    const discovery = await getDiscoveryFeed();
+    if (discovery.products.length > 0) {
+      const data = discovery.products.map(p => ({
+        id: p.id,
+        title: p.title,
+        price: p.price,
+        condition: p.condition,
+        category: p.category,
+        sellerName: p.sellerName,
+        sellerSchool: p.sellerSchool,
+        image: p.image || undefined,
+      }));
       setCache('products', data);
       return data;
     }
@@ -262,8 +229,8 @@ export async function fetchRecentProducts(): Promise<RealProduct[]> {
 
 export async function fetchUserCount(): Promise<number> {
   try {
-    const snap = await getDocs(query(collection(db, 'users'), limit(1000)));
-    return snap.size;
+    const stats = await getLandingStatsCallable();
+    return stats.totalUsers;
   } catch {
     return 200;
   }
@@ -271,8 +238,8 @@ export async function fetchUserCount(): Promise<number> {
 
 export async function fetchProductCount(): Promise<number> {
   try {
-    const snap = await getDocs(query(collection(db, 'products'), limit(1000)));
-    return snap.size;
+    const stats = await getLandingStatsCallable();
+    return stats.totalProducts;
   } catch {
     return 350;
   }
@@ -292,16 +259,7 @@ export async function fetchLandingStats(): Promise<LandingStats> {
   if (cached) return cached;
 
   try {
-    const [usersSnap, productsSnap, schoolsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'users'), limit(1000))),
-      getDocs(query(collection(db, 'products'), limit(1000))),
-      getDocs(query(collection(db, 'schools'), limit(1000))),
-    ]);
-    const stats = {
-      totalUsers: usersSnap.size,
-      totalProducts: productsSnap.size,
-      totalSchools: schoolsSnap.size,
-    };
+    const stats = await getLandingStatsCallable();
     if (stats.totalUsers > 0 || stats.totalSchools > 0) {
       setCache('stats', stats);
       return stats;

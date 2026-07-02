@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, limit, getDocs, documentId } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useFollowingIds, followUser, unfollowUser } from '../../lib/follows';
@@ -9,6 +9,7 @@ import { getOptimizedImageUrl } from '../../lib/utils';
 import { useToast } from '../../lib/ToastContext';
 import { useAllBlockedUserIds } from '../../lib/blocks';
 import TrendingSidebar from './TrendingSidebar';
+import { getPublicUsers, searchDiscovery, searchPublicUsers } from '../../lib/discovery';
 
 interface SuggestedUser {
   id: string;
@@ -62,38 +63,35 @@ export default function SuggestedUsers() {
             .map(entry => entry[0]);
 
           if (sortedFof.length > 0) {
-            const userDocsSnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', sortedFof)));
+            const usersById = new Map((await getPublicUsers(sortedFof)).map(u => [u.id, u]));
             
             // Fetch names of mutual friends
             const mutualsToFetch = new Set<string>();
-            userDocsSnap.forEach(doc => {
-              const friends = fofFriends[doc.id] || [];
+            usersById.forEach((_, userId) => {
+              const friends = fofFriends[userId] || [];
               friends.slice(0, 2).forEach(id => mutualsToFetch.add(id));
             });
             
             const mutualNames: Record<string, string> = {};
             if (mutualsToFetch.size > 0) {
-              const mutualDocsSnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', Array.from(mutualsToFetch))));
-              mutualDocsSnap.forEach(doc => {
-                mutualNames[doc.id] = doc.data().name || 'User';
-              });
+              const mutualUsers = await getPublicUsers(Array.from(mutualsToFetch));
+              mutualUsers.forEach(u => { mutualNames[u.id] = u.name || 'User'; });
             }
 
-            userDocsSnap.forEach(doc => {
-              const data = doc.data();
-              const friends = fofFriends[doc.id] || [];
+            usersById.forEach((data, userId) => {
+              const friends = fofFriends[userId] || [];
               const mutualFriends = friends.slice(0, 2).map(id => ({ id, name: mutualNames[id] || 'User' }));
               
               fetchedUsers.push({
-                id: doc.id,
+                id: userId,
                 name: data.name || 'User',
                 school: data.school || 'Unknown School',
-                profilePicture: data.profilePicture,
+                profilePicture: data.profilePicture || undefined,
                 verified: data.verified,
                 mutualCount: friends.length,
                 mutualFriends: mutualFriends
               });
-              suggestedIdsSet.add(doc.id);
+              suggestedIdsSet.add(userId);
             });
             fetchedUsers.sort((a, b) => (b.mutualCount || 0) - (a.mutualCount || 0));
           }
@@ -101,39 +99,34 @@ export default function SuggestedUsers() {
 
         // Phase 2: Fallback to users from the same school
         if (fetchedUsers.length < 5) {
-          const q = query(collection(db, 'users'), where('school', '==', userData.school), limit(15));
-          const snapshot = await getDocs(q);
-          
-          snapshot.forEach(doc => {
-            if (doc.id !== user.uid && !followingIds.has(doc.id) && !suggestedIdsSet.has(doc.id)) {
-              const data = doc.data();
+          const discovery = await searchDiscovery({ school: userData.school, suggestions: true });
+          discovery.users.forEach(data => {
+            if (data.id !== user.uid && !followingIds.has(data.id) && !suggestedIdsSet.has(data.id)) {
               fetchedUsers.push({
-                id: doc.id,
+                id: data.id,
                 name: data.name || 'User',
                 school: data.school || 'Unknown School',
-                profilePicture: data.profilePicture,
+                profilePicture: data.profilePicture || undefined,
                 verified: data.verified
               });
-              suggestedIdsSet.add(doc.id);
+              suggestedIdsSet.add(data.id);
             }
           });
         }
 
         // Phase 3: General fallback
         if (fetchedUsers.length < 5) {
-          const generalQ = query(collection(db, 'users'), limit(15));
-          const generalSnap = await getDocs(generalQ);
-          generalSnap.forEach(doc => {
-            if (doc.id !== user.uid && !followingIds.has(doc.id) && !suggestedIdsSet.has(doc.id)) {
-              const data = doc.data();
+          const generalUsers = await searchPublicUsers({ limit: 15, excludeIds: [user.uid] });
+          generalUsers.forEach(data => {
+            if (data.id !== user.uid && !followingIds.has(data.id) && !suggestedIdsSet.has(data.id)) {
               fetchedUsers.push({
-                id: doc.id,
+                id: data.id,
                 name: data.name || 'User',
                 school: data.school || 'Unknown School',
-                profilePicture: data.profilePicture,
+                profilePicture: data.profilePicture || undefined,
                 verified: data.verified
               });
-              suggestedIdsSet.add(doc.id);
+              suggestedIdsSet.add(data.id);
             }
           });
         }

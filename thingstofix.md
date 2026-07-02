@@ -6,6 +6,43 @@
 
 ---
 
+## 🔄 Audit Refresh — 2026-07-01
+
+A fresh pass over the codebase found that **much of Phase 1 (security) and the biggest Phase 2 item have already been fixed** since the original audit. The lists below reconcile the document with the current code. New issues discovered in this pass are collected in **[Phase 8 — New Findings](#phase-8--new-findings-2026-07-01)**.
+
+> ⚠️ Scope note: this refresh fully re-audited `firestore.rules`, `functions/src/index.ts`, `api/*`, and build/config. The React UI layer (pages/components) was only spot-checked — a full UI audit is still outstanding.
+
+### ✅ Resolved since last audit (verify before deleting the section)
+
+| Item | Evidence in current code |
+|------|--------------------------|
+| **1.1** `.env` committed | `git log --all -- .env` is empty — never committed; `.env` is gitignored. (Note: `VITE_*` Firebase web keys are *inherently* public in any client bundle — this is expected, not a leak.) |
+| **1.2** Notification API no auth | `api/send-notification.js:50-62` now verifies a Firebase Bearer ID token + 10/min rate limit. (Residual issues → **8.3**.) |
+| **1.3** Verify API no auth | `api/verify.ts:125-143` verifies Bearer token, enforces `verifiedUid === uid`, rate-limits 3/hr, and restricts CORS to `nextbench.in` + localhost. |
+| **1.4** AdminPanel XSS | `AdminPanel.tsx:719` now renders `DOMPurify.sanitize(emailBodyHtml)`. |
+| **1.8** Public read of all users | `firestore.rules:73-74` — `get` requires `canAccessUser()` (signed-in, block-aware); `list: if false`. |
+| **1.9** `isAdmin` client field for authz | `firestore.rules:9` — `isAdmin()` now checks the **custom claim** `request.auth.token.admin == true`. |
+| **1.10** No CSP / security headers | `vercel.json` now sets `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Referrer-Policy`. (CSP still allows `'unsafe-inline'`/`'unsafe-eval'` in `script-src` — hardening remains.) |
+| **1.12** Client can create notifications for any user | `firestore.rules:387` — `allow create: if false`; creation moved to the server `createNotification` callable. (Residual spoofing → **8.4**.) |
+| **1.13** Duplicate `reply_upvotes` rule blocks | Only one `match /reply_upvotes` block remains (`firestore.rules:472`). |
+| **2.3** TF.js / NSFWJS in client bundle | Removed from `package.json`; `vite.config.ts` back to `chunkSizeWarningLimit: 500` and `maximumFileSizeToCacheInBytes: 2MB`. `imageModeration.ts` is now a server-delegating stub. |
+| **4.3** Reply-image `createObjectURL` leak | `Feed.tsx:360` and `PostDetailModal.tsx:271-273` now use a `useMemo` + `revokeObjectURL` cleanup pattern. |
+
+### ⚠️ Corrected / partially addressed (severity or framing changed — keep, with notes)
+
+| Item | Correction |
+|------|-----------|
+| **1.5** Unsigned Cloudinary uploads | **Still unsigned.** `storage.ts:33,127` append `upload_preset` (unsigned preset); no server-generated `signature`. The code comment claims "authenticated/signed" but the request is not signed. Still a valid finding. |
+| **1.6** Image moderation fails open | Client TF.js path is gone; `imageModeration.ts` now **returns `{ isSafe: true }` unconditionally** and defers to a Cloudinary moderation add-on. Whether that add-on is actually configured on the unsigned preset is **unverified** — if not, images are effectively unmoderated. Reframe as "moderation now depends entirely on an unverified server-side add-on." |
+| **1.7** Text moderation client-only | **Server-side moderation now exists**: `moderatePost`/`moderateReply` triggers call Google NL `moderateText`. But it's *post-hoc* (content is briefly public before the trigger flips status), and the API key falls back to the client `VITE_FIREBASE_API_KEY` (`functions/src/index.ts:~1104`) which likely lacks Language API access → silent degrade to the tiny keyword list. |
+| **1.11** No server-side write rate limiting | **Rate limiting now exists**: posts (5/5min), messages (30/min), replies (15/min), notifications (15/min), push (10/min), verify (3/hr). Residual weaknesses → **8.5**. |
+| **2.10** SW precaches all assets | Still precaches all matched assets, but capped at 2MB (TF.js gone) with a documented rationale (avoid white-screen 404s on redeploy). Much smaller impact now. |
+| **3.7** Both lockfiles present | **Still true** — `package-lock.json` and `pnpm-lock.yaml` both exist. |
+| **5.6** Presence heartbeat cost | **Still true** — `presence.ts:18` heartbeat is `60_000`ms and `useOnlineCount` still subscribes to all `online == true` users. |
+| **7.5 / 7.6** Moderation transparency / search | Partially addressed: server moderation exists (7.5) and `discovery.ts` + `searchDiscovery`/`searchPublicUsers` callables were added (7.6), but search is still prefix-based, not full-text, and there is still no rejection-reason/appeal UI. |
+
+---
+
 ## Table of Contents
 
 1. [Phase 1 — Critical Security Vulnerabilities](#phase-1--critical-security-vulnerabilities)
@@ -15,6 +52,7 @@
 5. [Phase 5 — Data Integrity & Backend Gaps](#phase-5--data-integrity--backend-gaps)
 6. [Phase 6 — Missing Production Infrastructure](#phase-6--missing-production-infrastructure)
 7. [Phase 7 — Feature Parity Gaps vs. Flagship Social Apps](#phase-7--feature-parity-gaps-vs-flagship-social-apps)
+8. [Phase 8 — New Findings (2026-07-01)](#phase-8--new-findings-2026-07-01)
 
 ---
 
@@ -941,6 +979,256 @@ These aren't bugs — they're **missing table-stakes features** that every compe
 
 ---
 
+## Phase 8 — New Findings (2026-07-01)
+
+Issues discovered in the 2026-07-01 refresh that were **not** in the original audit. Backend/rules items are verified against the current code; the React UI layer was only spot-checked, so 8.18–8.19 are not exhaustive.
+
+---
+
+### 8.1 — OTP login rotates the user's password on every sign-in and returns it to the client
+
+**File**: `functions/src/index.ts` (`verifyAuthOtpEmail`, ~lines 479-484)
+
+- To avoid the IAM `signBlob` permission needed for custom tokens, the callable calls `admin.auth().updateUser(uid, { password: loginPassword })` with a fresh random password on **every** successful OTP verification, then returns `loginPassword` in the response for the client to sign in with.
+- Consequences: (a) any password the user set is silently destroyed each login; (b) a plaintext credential transits to the client; (c) the callable is unauthenticated, so passing OTP triggers a credential rotation for that account.
+
+**Fix**: Grant the function's service account the *Service Account Token Creator* role and use `admin.auth().createCustomToken(uid)` instead of password rotation.
+
+**Severity**: 🔴 High
+
+---
+
+### 8.2 — `unsubscribeFromEmails` lets anyone opt out any user by UID
+
+**File**: `functions/src/index.ts` (`unsubscribeFromEmails`, ~lines 1068-1073)
+
+- The callable takes a raw `uid` from `request.data` and does `users/{uid}.update({ emailOptOut: true })` with **no authentication and no signed token**. UIDs appear in unsubscribe links (`?uid=...`), so anyone can suppress email for any user, or mass-unsubscribe the user base.
+
+**Fix**: Sign the unsubscribe URL with an HMAC of the UID and verify it before writing `emailOptOut`.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.3 — Push-notification API: hardcoded project fallback, unbounded token list, no ownership check
+
+**File**: `api/send-notification.js` (lines 5, 105-127)
+
+- Line 5 still hardcodes `|| 'nextbench-a11ed'` as a project-ID fallback (the `verify.ts` endpoint fixed this by throwing).
+- The endpoint accepts an **unbounded `tokens` array** with no length cap and never checks that the tokens belong to the authenticated user — an authed user can push arbitrary notifications to any FCM tokens they supply, 10×/min.
+
+**Fix**: Remove the hardcoded project-ID fallback; cap `tokens.length`; validate that each token is registered to the caller.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.4 — `createNotification` callable still allows spoofing non-admin notification types
+
+**File**: `functions/src/index.ts` (`createNotification`, ~lines 1608-1658)
+
+- The server callable correctly restricts sensitive types (`listing_approved`, `admin_promoted`, etc.) to admins, but it does **not** restrict ordinary types (`follow`, `message`) to legitimate actors. A signed-in user can forge a "someone followed you" / "new message" notification to **any** `userId`.
+
+**Fix**: Have real triggers (on follow/message docs) create these notifications as side effects instead of accepting a client-specified type + target.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.5 — Rate limiters are reactive (delete-after-write) and fail open
+
+**File**: `functions/src/index.ts` (`enforceRateLimit` ~1219-1249; `rateLimitPost`/`rateLimitMessage`/`rateLimitReply` ~1539-1606)
+
+- Limits are enforced by `onDocumentCreated` triggers that **delete** the offending doc *after* it is written — so side-effect triggers (`notifyOnNewMessage`, `moderatePost`) can fire on a spam item before it's deleted.
+- `enforceRateLimit` returns `true` (allow) on any error (line ~1247), so a Firestore hiccup disables all limits.
+
+**Fix**: Enforce limits on a callable/write path *before* the write where possible; consider fail-closed above abusive volumes.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.6 — Any verified user can set arbitrary vote counts and overwrite poll results
+
+**File**: `firestore.rules` (line 447)
+
+```
+(incoming().diff(existing()).affectedKeys().hasOnly(['upvotesCount', 'downvotesCount', 'repliesCount', 'reactionsCount', 'poll', 'updatedAt']))
+```
+
+- This branch lets **any** verified user update these fields on **any** post with **no value validation**. A user can set `upvotesCount` to any number, or overwrite the entire `poll` map — stuffing or wiping poll votes. This is the rules-level root cause behind the client-managed vote races in **5.1**.
+
+**Fix**: Move counter/poll mutations behind Cloud Function triggers (atomic `increment()` on `post_upvotes` create/delete), and remove client write access to these fields — or at minimum constrain deltas to ±1.
+
+**Severity**: 🔴 High
+
+---
+
+### 8.7 — `saved_posts` are readable and listable by any signed-in user
+
+**File**: `firestore.rules` (lines 481-482)
+
+```
+allow read: if isSignedIn();
+allow list: if isSignedIn();
+```
+
+- Unlike `wishlists`/`notifications`, the `saved_posts` read/list rules are **not scoped to the owner**. Any signed-in user can query the whole collection and see what every user has privately bookmarked.
+
+**Fix**: Scope `read` to `resource.data.userId == request.auth.uid` and keep `list` gated by the same client-filter pattern used for notifications.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.8 — `school_requests` can be created unauthenticated
+
+**File**: `firestore.rules` (lines 568-571)
+
+- `allow create` has no `isSignedIn()` guard ("Allow unauthenticated create since this happens during signup"). Anyone can spam arbitrary `school_requests` with attacker-controlled `idCardUrl`/`requesterEmail` values, with no rate limit.
+
+**Fix**: Require auth for the request (the signup user is authenticated by that point), or route it through a rate-limited callable.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.9 — Broad `list` permissions leak the social graph
+
+**File**: `firestore.rules` (`follows` 535-536, `post_upvotes` 457-458, `reviews` 365-366, `usernames` 614-615, `wishlists` 353)
+
+- These collections allow `list: if isSignedIn()` with no per-document constraint, so any signed-in user can enumerate who follows whom, who upvoted what, and every username→uid mapping.
+
+**Fix**: Where the client only ever queries by a specific key, document that invariant and rely on it; otherwise restrict list access or expose aggregates via callables.
+
+**Severity**: 🟡 Low–Medium
+
+---
+
+### 8.10 — Reviews have no purchase verification and a spoofable author name
+
+**File**: `firestore.rules` (lines 368-375)
+
+- `reviews` create only checks `reviewerId == request.auth.uid`. There's no proof the reviewer transacted with the seller, `reviewerName` is client-supplied (spoofable), and nothing prevents one user from posting unlimited reviews on the same product.
+
+**Fix**: Gate review creation on a completed transaction record; derive `reviewerName` server-side; enforce one-review-per-user-per-product.
+
+**Severity**: 🟡 Low
+
+---
+
+### 8.11 — `getLandingStats` reads up to 3,000 documents per call
+
+**File**: `functions/src/index.ts` (`getLandingStats`, ~lines 1526-1537)
+
+- This public callable computes `totalUsers/totalProducts/totalSchools` via `collection(...).limit(1000).get()` on three collections and returns `.size` — up to **3,000 billed reads on every landing-page load**, and the counts silently cap at 1000.
+
+**Fix**: Use Firestore `.count().get()` aggregation queries (already used in the stray `functions/query-test.js`).
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.12 — `broadcastEmail` is not idempotent — retries re-spam everyone
+
+**File**: `functions/src/index.ts` (`broadcastEmail`, ~lines 994-1060)
+
+- The idempotency guard doc (`emailBroadcasts/{broadcastId}`) is written only at line ~1054, **after** iterating up to 2000 users with `sleep(100ms)` each. Any timeout/crash/retry before that final `.set()` leaves no guard, so re-invocation with the same `broadcastId` re-emails everyone already sent.
+
+**Fix**: Claim the broadcast doc (`create()` with status `in_progress`) *before* the loop and track per-recipient completion.
+
+**Severity**: 🔴 High
+
+---
+
+### 8.13 — DM notification emails fire on every message with no unread check
+
+**File**: `functions/src/index.ts` (`notifyOnNewMessage`, ~lines 747-810)
+
+- Despite being named "Unread DM Notification," the trigger fires on every message create and only gates on `canSendEmail` (opt-out + `online === true` + 30-min cooldown). A user with the app backgrounded (`online === false`) gets an email every 30 minutes even while actively reading the conversation — there is no "receiver hasn't opened the room / message still unread" check.
+
+**Fix**: Check the room's per-user `lastRead`/`unreadCount` for the receiver and skip if already seen.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.14 — Digest/broadcast jobs have no pagination (silent under-delivery + N+1)
+
+**File**: `functions/src/index.ts` (`sendWeeklyDigest` `limit(500)` ~883; `broadcastEmail` `limit(2000)` ~998)
+
+- Both jobs load a single non-paginated page of users, so once the base exceeds the cap everyone beyond it is silently never emailed. The digest also runs a `products` query per eligible user (N+1 reads).
+
+**Fix**: Paginate with `startAfter` cursors over ordered queries; batch the per-user reads.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.15 — Referral count drifts between two independent code paths
+
+**File**: `functions/src/index.ts` (signup path ~453-473 vs `submitInviteCode` ~538-598)
+
+- The signup path sets `referredBy` and writes a `referrals/{uid}` subcollection doc but does **not** increment the referrer's `referralCount`. The separate `submitInviteCode` callable both sets `referredBy` and increments `referralCount`. So `referralCount` and the `referrals` subcollection size diverge depending on which path applied the code. The signup path also lacks the self-referral guard that `submitInviteCode` has.
+
+**Fix**: Consolidate referral application into one transactional helper that sets `referredBy` and increments `referralCount` atomically, with a self-referral guard.
+
+**Severity**: 🟠 Medium
+
+---
+
+### 8.16 — DM email CTA ships an unrendered template literal
+
+**File**: `functions/src/index.ts` (~line 793; compiled at `functions/lib/index.js:689`)
+
+```js
+ctaText: "Reply to ${senderName} →"   // double quotes, not backticks
+```
+
+- Users receive the literal string `Reply to ${senderName} →` in the email button instead of the sender's name.
+
+**Fix**: Use backticks: `` ctaText: `Reply to ${senderName} →` ``.
+
+**Severity**: 🟢 Low
+
+---
+
+### 8.17 — Stray one-off scripts committed to `functions/`
+
+**Files**: `functions/check-broadcast.js`, `functions/query-test.js`, `functions/test-options.ts`, `functions/test-resend.js`
+
+- Ad-hoc scripts sit in the functions package. `check-broadcast.js` reads a field the code never writes (`doc.data().sentCount` vs the actual `recipientCount`), so it always logs `undefined`. `test-options.ts` defines an extra `testOptions` callable that, if picked up by the build, deploys a public no-op function. These are committed noise and a mild deploy risk (related to **3.6**).
+
+**Fix**: Delete or move these out of the functions package; ensure `testOptions` is never deployed.
+
+**Severity**: 🟢 Low
+
+---
+
+### 8.18 — ID/selfie/document preview object URLs are never revoked (memory leak)
+
+**Files**: `src/pages/Auth/Verification.tsx` (lines 78, 104), `src/pages/Auth/OrgSignup.tsx` (line 70)
+
+- `setIdPreview(URL.createObjectURL(file))`, the selfie preview, and the org-document preview create blob URLs with no matching `URL.revokeObjectURL()` on replacement/unmount. (Feed/ChatRoom/SellItem already fixed this pattern — these three files were missed.)
+
+**Fix**: Apply the same `useMemo` + `useEffect` cleanup pattern used in `Feed.tsx:360`.
+
+**Severity**: 🟢 Low
+
+---
+
+### 8.19 — Auth-gated actions use `window.location.href` full reloads instead of SPA navigation
+
+**Files**: `Feed.tsx` (1005, 1089, 1175), `Search.tsx` (187, 204), `PostDetailModal.tsx` (397)
+
+- Guest actions redirect via `window.location.href = '/login'`, forcing a full page reload that tears down the SPA (re-downloads the bundle, re-initializes Firebase, loses in-memory state) instead of `navigate('/login')`.
+
+**Fix**: Use React Router's `useNavigate()` for in-app redirects.
+
+**Severity**: 🟢 Low
+
+---
+
 ## Execution Priority Matrix
 
 | Priority | Phase | Description | Effort | Impact | Timeline |
@@ -954,7 +1242,10 @@ These aren't bugs — they're **missing table-stakes features** that every compe
 | 🟢 P3 | 3.1–3.7 | Architecture & code quality cleanup | High | Medium | **Week 4-8** |
 | 🟢 P3 | 4.1–4.7 | UX bugs and broken interactions | Medium | Medium | **Week 4-6** |
 | 🔵 P4 | 7.1–7.12 | Feature parity with flagship apps | Very High | Medium | **Week 6-16** |
+| 🔴 P0 | 8.1, 8.6, 8.12 | New criticals: OTP password-rotation, arbitrary vote/poll writes, non-idempotent broadcast | Medium | Critical | **Week 1** |
+| 🟠 P1 | 8.2–8.5, 8.7–8.8, 8.11, 8.13–8.15 | New backend/rules security & cost gaps | Medium | High | **Week 2-4** |
+| 🟢 P3 | 8.9–8.10, 8.16–8.19 | New low-severity rules/UI/cleanup items | Low | Low | **Week 4-8** |
 
 ---
 
-> **Bottom line**: NextBench has a solid *feature set* and an ambitious vision, but it ships with the security posture of a hackathon project, the performance profile of a prototype, and the architecture of a rapid MVP. None of these are permanent — every issue listed here is fixable. The path to being competitive starts with **Phase 1 (security)** and **Phase 2.3 (removing the 6 MB client-side ML pipeline)**.
+> **Bottom line (updated 2026-07-01)**: The original Phase 1 was largely addressed — hardened Firestore rules (custom-claim admin, block-aware reads, server-only notifications), authenticated APIs, CSP + security headers, and removal of the 6 MB client-side ML pipeline (2.3). The remaining risk has shifted from "wide-open front door" to **subtler backend and rules-level integrity holes** (Phase 8): an OTP flow that rotates passwords (8.1), a rule that lets any user rewrite vote/poll counts (8.6), a broadcast that re-spams on retry (8.12), plus lingering architecture debt (monolithic `Feed.tsx`/`Profile.tsx`, no tests, no state caching) and the full Phase 7 feature-parity gap. Start the next pass with **8.1, 8.6, and 8.12**, then finish the residual items flagged in the Audit Refresh tables. A complete UI-layer audit is still outstanding.

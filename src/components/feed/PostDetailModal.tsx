@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import { motion } from 'motion/react';
 import { X, MapPin, School, Flame, ChevronLeft, ChevronRight, Heart, MessageSquare, Share2, Image as ImageIcon, Trash2, Pencil } from 'lucide-react';
-import { collection, onSnapshot, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDocs, documentId } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
@@ -15,6 +15,7 @@ import { notifyMentionedUsers } from '../../lib/mentions';
 import { getPersonaDisplay } from '../../lib/confessions';
 import { getUserReaction, togglePostReaction, ReactionType } from '../../lib/reactions';
 import { useAllBlockedUserIds } from '../../lib/blocks';
+import { getPostReplies } from '../../lib/discovery';
 import PollDisplay from '../ui/PollDisplay';
 import MentionInput from '../ui/MentionInput';
 import type { Post } from '../../pages/Dashboard/Feed';
@@ -201,8 +202,8 @@ interface PostDetailModalProps {
   hasDownvoted: boolean;
   onShare: (post: Post) => void;
   onDelete?: (postId: string) => void;
-  onDeleteReply?: (replyId: string) => void;
-  onEditReply: (replyId: string, newContent: string) => void;
+  onDeleteReply?: (replyId: string) => void | Promise<void>;
+  onEditReply: (replyId: string, newContent: string) => void | Promise<void>;
   onUpvoteReply: (reply: any) => void;
   replyUpvotedIds: Set<string>;
   isAdmin?: boolean;
@@ -290,45 +291,18 @@ export default function PostDetailModal({
 
   // ─── Live replies subscription (moved out of Feed) ───
   useEffect(() => {
-    const q = query(collection(db, 'post_replies'), where('postId', '==', post.id));
-    const unsub = onSnapshot(q, async (snap) => {
-      const reps: any[] = [];
-      snap.forEach(d => reps.push({ id: d.id, ...d.data() }));
-      reps.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
-
-      // ─── Batch-resolve missing author profile pictures (eliminates N+1 getDoc) ───
-      const missingAvatarIds = Array.from(new Set(
-        reps
-          .filter(r => r.authorId && !r.authorProfilePicture && !r.isAnonymous)
-          .map(r => r.authorId as string)
-      ));
-
-      if (missingAvatarIds.length > 0) {
-        const avatarMap: Record<string, string> = {};
-        for (let i = 0; i < missingAvatarIds.length; i += 30) {
-          const batch = missingAvatarIds.slice(i, i + 30);
-          try {
-            const batchSnap = await getDocs(
-              query(collection(db, 'users'), where(documentId(), 'in', batch))
-            );
-            batchSnap.forEach(uDoc => {
-              const pic = uDoc.data()?.profilePicture;
-              if (pic) avatarMap[uDoc.id] = pic;
-            });
-          } catch {
-            // Non-critical: Comment component still shows initials as fallback.
-          }
+    let cancelled = false;
+    getPostReplies(post.id)
+      .then((reps) => {
+        if (!cancelled) setReplies(reps);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('Failed to load replies:', err);
+          setReplies([]);
         }
-        reps.forEach(r => {
-          if (r.authorId && avatarMap[r.authorId]) {
-            r.authorProfilePicture = avatarMap[r.authorId];
-          }
-        });
-      }
-
-      setReplies(reps);
-    });
-    return () => unsub();
+      });
+    return () => { cancelled = true; };
   }, [post.id]);
 
   // ─── Paste to add image to reply (moved out of Feed) ───
@@ -391,6 +365,21 @@ export default function PostDetailModal({
     document.getElementById('reply-input')?.focus();
   };
 
+  const handleDeleteReply = async (replyId: string) => {
+    if (!onDeleteReply) return;
+    await onDeleteReply(replyId);
+    setReplies(prev => prev.filter(reply => reply.id !== replyId && reply.parentId !== replyId));
+  };
+
+  const handleEditReply = async (replyId: string, newContent: string) => {
+    await onEditReply(replyId, newContent);
+    setReplies(prev => prev.map(reply =>
+      reply.id === replyId
+        ? { ...reply, content: newContent, edited: true, updatedAt: new Date() }
+        : reply
+    ));
+  };
+
   const handleSubmitReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
@@ -439,6 +428,7 @@ export default function PostDetailModal({
       };
 
       await addDoc(collection(db, 'post_replies'), replyData);
+      getPostReplies(post.id).then(setReplies).catch(() => {});
 
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {
@@ -676,8 +666,8 @@ export default function PostDetailModal({
                   reply={reply}
                   repliesMap={repliesMap}
                   onReply={handleReplyTo}
-                  onDeleteReply={onDeleteReply}
-                  onEditReply={onEditReply}
+                  onDeleteReply={handleDeleteReply}
+                  onEditReply={handleEditReply}
                   onUpvoteReply={onUpvoteReply}
                   replyUpvotedIds={replyUpvotedIds}
                   isAdmin={isAdmin}

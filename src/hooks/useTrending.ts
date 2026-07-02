@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { getDiscoveryFeed } from '../lib/discovery';
 import {
   TrendablePost,
   TrendableProduct,
@@ -21,87 +20,78 @@ interface TrendingData {
   loading: boolean;
 }
 
+function trendTimestamp(value: any) {
+  if (typeof value === 'number') {
+    return { toMillis: () => value };
+  }
+  return value;
+}
+
 export function useTrending(): TrendingData {
   const { user, userData } = useAuth();
   const [rawPosts, setRawPosts] = useState<TrendablePost[]>([]);
   const [rawProducts, setRawProducts] = useState<TrendableProduct[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Subscribe to approved posts
   useEffect(() => {
-    const q = query(
-      collection(db, 'posts'),
-      where('status', '==', 'approved')
-    );
+    let cancelled = false;
+    setLoading(true);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const posts: TrendablePost[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        posts.push({
-          id: docSnap.id,
-          title: data.title || '',
-          content: data.content || '',
-          authorId: data.authorId || '',
-          authorName: data.authorName || 'Unknown',
-          authorProfilePicture: data.authorProfilePicture || null,
-          authorUsername: data.authorUsername || null,
-          school: data.school || '',
-          city: data.city,
-          type: data.type || 'others',
-          imageUrl: data.imageUrl,
-          imageUrls: data.imageUrls,
-          upvotesCount: data.upvotesCount || 0,
-          repliesCount: data.repliesCount || 0,
-          sharesCount: data.sharesCount || 0,
-          createdAt: data.createdAt,
-        });
+    getDiscoveryFeed()
+      .then(({ posts, products }) => {
+        if (cancelled) return;
+
+        setRawPosts(posts.map((post) => ({
+          id: post.id,
+          title: post.title || '',
+          content: post.content || '',
+          authorId: post.authorId || '',
+          authorName: post.authorName || 'Unknown',
+          authorProfilePicture: post.authorProfilePicture || undefined,
+          authorUsername: (post as any).authorUsername || null,
+          school: post.school || '',
+          city: post.city,
+          type: post.type || 'others',
+          imageUrl: post.imageUrl,
+          imageUrls: post.imageUrls,
+          upvotesCount: post.upvotesCount || 0,
+          repliesCount: post.repliesCount || 0,
+          sharesCount: (post as any).sharesCount || 0,
+          createdAt: trendTimestamp(post.createdAt),
+        })));
+
+        setRawProducts(products.map((product) => ({
+          id: product.id,
+          title: product.title || '',
+          price: product.price || 0,
+          category: product.category || '',
+          condition: product.condition || '',
+          image: product.image || '',
+          status: product.status || 'available',
+          sellerId: product.sellerId || '',
+          sellerName: product.sellerName || 'Unknown',
+          sellerSchool: product.sellerSchool || '',
+          city: product.city,
+          createdAt: trendTimestamp(product.createdAt),
+          wishlistCount: (product as any).wishlistCount || 0,
+          inquiryCount: (product as any).inquiryCount || 0,
+        })));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error('Trending: Error fetching discovery feed:', error);
+          setRawPosts([]);
+          setRawProducts([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-      setRawPosts(posts);
-      setLoading(false);
-    }, (error) => {
-      console.error('Trending: Error fetching posts:', error);
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
-  }, []);
-
-  // Subscribe to available products
-  useEffect(() => {
-    const q = query(
-      collection(db, 'products'),
-      where('status', '==', 'available')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const products: TrendableProduct[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        products.push({
-          id: docSnap.id,
-          title: data.title || '',
-          price: data.price || 0,
-          category: data.category || '',
-          condition: data.condition || '',
-          image: data.image || '',
-          status: data.status || 'available',
-          sellerId: data.sellerId || '',
-          sellerName: data.sellerName || 'Unknown',
-          sellerSchool: data.sellerSchool || '',
-          city: data.city,
-          createdAt: data.createdAt,
-          wishlistCount: data.wishlistCount || 0,
-          inquiryCount: data.inquiryCount || 0,
-        });
-      });
-      setRawProducts(products);
-    }, (error) => {
-      console.error('Trending: Error fetching products:', error);
-    });
-
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
 
   // Compute trending — recomputes when raw data or user context changes
   const schoolTrending = useMemo(() => {

@@ -3,11 +3,12 @@ import { Building, ShieldCheck, X, Search, ChevronDown, Mail, ArrowLeft, RotateC
 import { Link, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { auth, db, functions } from '../../lib/firebase';
-import { signInWithPopup, signInWithRedirect, GoogleAuthProvider, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, GoogleAuthProvider, signInWithEmailAndPassword, signInWithCustomToken } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { doc, setDoc, getDoc, serverTimestamp, collection, getDocs, addDoc, query, where, limit, writeBatch } from 'firebase/firestore';
 import { useAuth } from '../../lib/AuthContext';
 import { uploadSchoolIdCard } from '../../lib/storage';
+import { lookupReferralCode } from '../../lib/discovery';
 
 const SCHOOLS = [
   "Loreto Convent",
@@ -385,12 +386,10 @@ export default function Signup() {
 
         if (referralCode.trim()) {
           try {
-            const q = query(collection(db, 'users'), where('referralCode', '==', referralCode.trim().toUpperCase()), limit(1));
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-              const referrerDoc = snap.docs[0];
-              userData.referredBy = referrerDoc.id;
-              batch.set(doc(db, 'users', referrerDoc.id, 'referrals', firebaseUser.uid), { timestamp: serverTimestamp() });
+            const referrerId = await lookupReferralCode(referralCode.trim());
+            if (referrerId) {
+              userData.referredBy = referrerId;
+              batch.set(doc(db, 'users', referrerId, 'referrals', firebaseUser.uid), { timestamp: serverTimestamp() });
             }
           } catch (refErr) {
             console.error('Failed to apply referral:', refErr);
@@ -471,8 +470,15 @@ export default function Signup() {
         },
       });
 
-      if (!result.data?.loginPassword || !result.data?.email) throw new Error('Authentication failed.');
-      await signInWithEmailAndPassword(auth, result.data.email, result.data.loginPassword);
+      // Preferred: custom token (no password mutation). Fall back to the legacy
+      // email/password path if the backend couldn't mint a token (IAM not yet set).
+      if (result.data?.customToken) {
+        await signInWithCustomToken(auth, result.data.customToken);
+      } else if (result.data?.loginPassword && result.data?.email) {
+        await signInWithEmailAndPassword(auth, result.data.email, result.data.loginPassword);
+      } else {
+        throw new Error('Authentication failed.');
+      }
       localStorage.removeItem('pendingReferral');
       navigate('/dashboard');
     } catch (err: any) {

@@ -14,6 +14,7 @@ import {
   regenerateInviteCode, deleteClub, leaveClub, addMemberDirectly
 } from '../../lib/clubs';
 import { useScrollLock } from '../../hooks/useScrollLock';
+import { getPublicUsers, searchPublicUsers } from '../../lib/discovery';
 
 interface MemberInfo {
   id: string;
@@ -68,16 +69,19 @@ export default function ClubSettings() {
     setLoadingMembers(true);
 
     const fetchMembers = async () => {
-      const memberPromises = club.memberIds.map(async (uid) => {
-        const uDoc = await getDoc(doc(db, 'users', uid));
-        if (uDoc.exists()) {
-          const d = uDoc.data();
-          return { id: uid, name: d.name || 'User', profilePicture: d.profilePicture, school: d.school, verified: d.verified };
-        }
-        return { id: uid, name: 'Deleted User' };
+      const publicUsers = await getPublicUsers(club.memberIds);
+      const userMap = new Map(publicUsers.map(u => [u.id, u]));
+      const results = club.memberIds.map((uid) => {
+        const u = userMap.get(uid);
+        if (!u) return { id: uid, name: 'Deleted User' };
+        return {
+          id: uid,
+          name: u.name || 'User',
+          profilePicture: u.profilePicture || undefined,
+          school: u.school,
+          verified: u.verified
+        };
       });
-
-      const results = await Promise.all(memberPromises);
       // Sort: lead first, then co-leads, then alphabetical
       results.sort((a, b) => {
         if (a.id === club.leadId) return -1;
@@ -103,24 +107,11 @@ export default function ClubSettings() {
     }
 
     setSearchingUsers(true);
-    let searchTerm = searchUsers.trim();
-    searchTerm = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1);
-    const endStr = searchTerm + '\uf8ff';
-
-    const q = query(
-      collection(db, 'users'),
-      where('name', '>=', searchTerm),
-      where('name', '<=', endStr),
-      limit(15)
-    );
-
-    getDocs(q).then((snap) => {
-      const results: any[] = [];
-      snap.forEach((d) => {
-        if (d.id !== user?.uid && !club?.memberIds.includes(d.id)) {
-          results.push({ id: d.id, ...d.data() });
-        }
-      });
+    searchPublicUsers({
+      query: searchUsers,
+      limit: 15,
+      excludeIds: [user?.uid || '', ...(club?.memberIds || [])],
+    }).then((results) => {
       setUserResults(results);
       setSearchingUsers(false);
     }).catch(() => setSearchingUsers(false));

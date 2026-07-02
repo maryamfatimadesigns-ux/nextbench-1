@@ -6,11 +6,15 @@ import {
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import { getDoc, doc } from 'firebase/firestore';
+import { isBlockRelationship } from './blocks';
 
 // ─── Follow / Unfollow ───────────────────────────────────
 
 export async function followUser(currentUserId: string, targetUserId: string) {
   if (currentUserId === targetUserId) return;
+  if (await isBlockRelationship(currentUserId, targetUserId)) {
+    throw new Error('BLOCKED: Cannot follow this user.');
+  }
 
   // Check if already following
   const q = query(
