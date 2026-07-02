@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
-import { getDiscoveryFeed } from '../lib/discovery';
 import {
   TrendablePost,
   TrendableProduct,
@@ -20,66 +21,92 @@ interface TrendingData {
   loading: boolean;
 }
 
-function trendTimestamp(value: any) {
-  if (typeof value === 'number') {
-    return { toMillis: () => value };
-  }
-  return value;
-}
-
 export function useTrending(): TrendingData {
   const { user, userData } = useAuth();
   const [rawPosts, setRawPosts] = useState<TrendablePost[]>([]);
   const [rawProducts, setRawProducts] = useState<TrendableProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  // Only fetch once per user session — trending data doesn't need to be live
+  const hasFetched = useRef(false);
 
   useEffect(() => {
+    // Reset when user changes
+    hasFetched.current = false;
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+
     let cancelled = false;
     setLoading(true);
 
-    getDiscoveryFeed()
-      .then(({ posts, products }) => {
+    // Direct Firestore queries — faster than Cloud Function (no cold start),
+    // no CORS risk, and works regardless of function deployment status.
+    const postsQuery = query(
+      collection(db, 'posts'),
+      where('status', '==', 'approved'),
+      orderBy('createdAt', 'desc'),
+      limit(40)
+    );
+    const productsQuery = query(
+      collection(db, 'products'),
+      where('status', 'in', ['available', 'sold']),
+      orderBy('createdAt', 'desc'),
+      limit(30)
+    );
+
+    Promise.all([getDocs(postsQuery), getDocs(productsQuery)])
+      .then(([postSnap, productSnap]) => {
         if (cancelled) return;
 
-        setRawPosts(posts.map((post) => ({
-          id: post.id,
-          title: post.title || '',
-          content: post.content || '',
-          authorId: post.authorId || '',
-          authorName: post.authorName || 'Unknown',
-          authorProfilePicture: post.authorProfilePicture || undefined,
-          authorUsername: (post as any).authorUsername || null,
-          school: post.school || '',
-          city: post.city,
-          type: post.type || 'others',
-          imageUrl: post.imageUrl,
-          imageUrls: post.imageUrls,
-          upvotesCount: post.upvotesCount || 0,
-          repliesCount: post.repliesCount || 0,
-          sharesCount: (post as any).sharesCount || 0,
-          createdAt: trendTimestamp(post.createdAt),
-        })));
+        setRawPosts(postSnap.docs.map(d => {
+          const data = d.data();
+          const createdAtMillis = data.createdAt?.toMillis?.() ?? 0;
+          return {
+            id: d.id,
+            title: data.title || '',
+            content: data.content || '',
+            authorId: data.authorId || '',
+            authorName: data.authorName || 'Unknown',
+            authorProfilePicture: data.authorProfilePicture || undefined,
+            authorUsername: data.authorUsername || null,
+            school: data.school || '',
+            city: data.city,
+            type: data.type || 'others',
+            imageUrl: data.imageUrl,
+            imageUrls: data.imageUrls,
+            upvotesCount: data.upvotesCount || 0,
+            repliesCount: data.repliesCount || 0,
+            sharesCount: data.sharesCount || 0,
+            createdAt: { toMillis: () => createdAtMillis },
+          } as TrendablePost;
+        }));
 
-        setRawProducts(products.map((product) => ({
-          id: product.id,
-          title: product.title || '',
-          price: product.price || 0,
-          category: product.category || '',
-          condition: product.condition || '',
-          image: product.image || '',
-          status: product.status || 'available',
-          sellerId: product.sellerId || '',
-          sellerName: product.sellerName || 'Unknown',
-          sellerSchool: product.sellerSchool || '',
-          city: product.city,
-          createdAt: trendTimestamp(product.createdAt),
-          wishlistCount: (product as any).wishlistCount || 0,
-          inquiryCount: (product as any).inquiryCount || 0,
-        })));
+        setRawProducts(productSnap.docs.map(d => {
+          const data = d.data();
+          const createdAtMillis = data.createdAt?.toMillis?.() ?? 0;
+          return {
+            id: d.id,
+            title: data.title || '',
+            price: data.price || 0,
+            category: data.category || '',
+            condition: data.condition || '',
+            image: data.image || data.imageUrl || '',
+            status: data.status || 'available',
+            sellerId: data.sellerId || '',
+            sellerName: data.sellerName || 'Unknown',
+            sellerSchool: data.sellerSchool || '',
+            city: data.city,
+            createdAt: { toMillis: () => createdAtMillis },
+            wishlistCount: data.wishlistCount || 0,
+            inquiryCount: data.inquiryCount || 0,
+          } as TrendableProduct;
+        }));
       })
       .catch((error) => {
         if (!cancelled) {
-          console.error('Trending: Error fetching discovery feed:', error);
+          console.error('Trending: Error fetching data:', error);
           setRawPosts([]);
           setRawProducts([]);
         }
@@ -88,12 +115,9 @@ export function useTrending(): TrendingData {
         if (!cancelled) setLoading(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [user?.uid]);
 
-  // Compute trending — recomputes when raw data or user context changes
   const schoolTrending = useMemo(() => {
     if (!userData?.school) return [];
     return computeSchoolTrending(rawPosts, userData.school, userData.city, 5);
@@ -112,11 +136,5 @@ export function useTrending(): TrendingData {
     return countActiveToday(rawPosts);
   }, [rawPosts]);
 
-  return {
-    schoolTrending,
-    cityTrending,
-    trendingProduct,
-    activeToday,
-    loading,
-  };
+  return { schoolTrending, cityTrending, trendingProduct, activeToday, loading };
 }
