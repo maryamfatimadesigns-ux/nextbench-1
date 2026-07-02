@@ -634,8 +634,11 @@ service cloud.firestore {
         && canInteractWithUser(incoming().followingId)
         && incoming().createdAt == request.time;
       
-      allow delete: if isVerified() 
-        && resource.data.followerId == request.auth.uid;
+      allow delete: if isVerified()
+        && (resource.data.followerId == request.auth.uid
+          || (resource.data.followingId == request.auth.uid
+            && exists(blockDoc(request.auth.uid, resource.data.followerId)))
+          || isAdmin());
     }
 
     // === SCHOOL REQUESTS ===
