@@ -24,8 +24,10 @@ import {
   type StoryDraft,
 } from '../../../lib/storyMedia';
 import ImageCropper from '../../ui/ImageCropper';
+import type { Layer } from '../../../lib/stories';
 import StorySourcePicker from './StorySourcePicker';
 import StoryCamera from './StoryCamera';
+import StoryEditor from './StoryEditor';
 import StoryReview from './StoryReview';
 
 interface Props {
@@ -33,7 +35,7 @@ interface Props {
   onPublished: (story: Story) => void;
 }
 
-type Step = 'pick' | 'camera' | 'crop' | 'review';
+type Step = 'pick' | 'camera' | 'crop' | 'edit' | 'review';
 
 const STORY_ASPECT = 9 / 16;
 
@@ -88,7 +90,7 @@ export default function StoryComposer({ onClose, onPublished }: Props) {
           layers: [],
           privacy: 'public',
         });
-        setStep('review');
+        setStep('edit');
       } catch {
         showToast('Could not process that video.', 'error');
         URL.revokeObjectURL(objectUrl);
@@ -130,7 +132,7 @@ export default function StoryComposer({ onClose, onPublished }: Props) {
         const { blob: cblob, width, height } = await compressImage(blob);
         const objectUrl = URL.createObjectURL(cblob);
         setDraft({ blob: cblob, objectUrl, mediaType: 'image', width, height, layers: [], privacy: 'public' });
-        setStep('review');
+        setStep('edit');
       } catch {
         showToast('Could not process that image.', 'error');
         setStep('pick');
@@ -199,12 +201,23 @@ export default function StoryComposer({ onClose, onPublished }: Props) {
         />
       )}
 
+      {step === 'edit' && draft && (
+        <StoryEditor
+          draft={draft}
+          onBack={discardDraft}
+          onNext={(layers: Layer[]) => {
+            setDraft((d) => (d ? { ...d, layers } : d));
+            setStep('review');
+          }}
+        />
+      )}
+
       {step === 'review' && draft && (
         <StoryReview
           draft={draft}
           publishing={publishing}
           progress={progress}
-          onBack={discardDraft}
+          onBack={() => setStep('edit')}
           onChangePrivacy={(p: StoryPrivacy) => setDraft((d) => (d ? { ...d, privacy: p } : d))}
           onPublish={handlePublish}
         />
