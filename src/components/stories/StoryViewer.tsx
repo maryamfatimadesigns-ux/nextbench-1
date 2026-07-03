@@ -11,17 +11,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import { X, Volume2, VolumeX } from 'lucide-react';
 import { getOptimizedImageUrl } from '../../lib/utils';
 import {
   IMAGE_DEFAULT_DURATION_MS,
   recordStoryView,
   markAuthorSeen,
+  deleteStory,
   type TrayEntry,
 } from '../../lib/stories';
 import { advance, rewind, jumpAuthor, clampCursor, type Cursor } from '../../lib/storyNavigation';
 import StoryContent from './StoryContent';
 import StoryProgressBars from './StoryProgressBars';
+import StoryOwnerBar from './StoryOwnerBar';
+import StoryViewersSheet from './StoryViewersSheet';
 
 interface Props {
   tray: TrayEntry[];
@@ -29,6 +33,7 @@ interface Props {
   currentUid: string;
   onClose: () => void;
   onSeen: (authorId: string) => void;
+  onDeleted?: () => void;
 }
 
 const SWIPE_CLOSE_PX = 120;
@@ -43,7 +48,7 @@ function timeAgo(ms: number): string {
   return `${Math.floor(diff / 86400)}d`;
 }
 
-export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onClose, onSeen }: Props) {
+export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onClose, onSeen, onDeleted }: Props) {
   const navAuthors = useMemo(() => tray.map((e) => ({ storyCount: e.stories.length })), [tray]);
 
   const [cursor, setCursor] = useState<Cursor>(() =>
@@ -51,6 +56,7 @@ export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onCl
   );
   const [progress, setProgress] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [viewersOpen, setViewersOpen] = useState(false);
   const [muted, setMuted] = useState(false);
 
   const entry = tray[cursor.authorIndex];
@@ -75,6 +81,14 @@ export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onCl
     if (closedRef.current) return;
     window.history.back(); // → popstate → finish()
   }, []);
+
+  const handleDelete = useCallback(() => {
+    if (!story) return;
+    const id = story.id;
+    deleteStory(id).catch(() => {});
+    onDeleted?.();
+    requestClose();
+  }, [story, onDeleted, requestClose]);
 
   // If the tray becomes empty (e.g. refetch), close.
   useEffect(() => {
@@ -114,9 +128,12 @@ export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onCl
     [navAuthors, requestClose],
   );
 
+  // Story is effectively paused while held OR while the viewers sheet is open.
+  const effectivePaused = paused || viewersOpen;
+
   // Keep latest handlers in refs for the rAF/keyboard closures.
-  const pausedRef = useRef(paused);
-  pausedRef.current = paused;
+  const pausedRef = useRef(effectivePaused);
+  pausedRef.current = effectivePaused;
   const advanceRef = useRef(goAdvance);
   advanceRef.current = goAdvance;
 
@@ -280,7 +297,7 @@ export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onCl
         <StoryContent
           key={story.id}
           story={story}
-          paused={paused}
+          paused={effectivePaused}
           muted={muted}
           onProgress={setProgress}
           onEnded={goAdvance}
@@ -331,6 +348,15 @@ export default function StoryViewer({ tray, initialAuthorIndex, currentUid, onCl
             </div>
           </div>
         </div>
+
+        {/* Owner tools (own story only) */}
+        {entry.authorId === currentUid && (
+          <StoryOwnerBar storyId={story.id} onOpenViewers={() => setViewersOpen(true)} onDelete={handleDelete} />
+        )}
+
+        <AnimatePresence>
+          {viewersOpen && <StoryViewersSheet storyId={story.id} onClose={() => setViewersOpen(false)} />}
+        </AnimatePresence>
       </motion.div>
     </motion.div>
   );

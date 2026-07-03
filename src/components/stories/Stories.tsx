@@ -37,6 +37,7 @@ export default function Stories() {
             currentUid={user.uid}
             onClose={() => setOpenIndex(null)}
             onSeen={markSeenLocal}
+            onDeleted={refetch}
           />
         )}
       </AnimatePresence>
