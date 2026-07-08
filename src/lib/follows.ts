@@ -8,6 +8,7 @@ import { useAuth } from './AuthContext';
 import { getDoc, doc } from 'firebase/firestore';
 import { isBlockRelationship } from './blocks';
 import { getPublicUsers } from './discovery';
+import { createNotification } from './notifications';
 
 // ─── Follow / Unfollow ───────────────────────────────────
 
@@ -35,14 +36,14 @@ export async function followUser(currentUserId: string, targetUserId: string) {
   try {
     const uDoc = await getDoc(doc(db, 'users', currentUserId));
     const currentUserName = uDoc.data()?.name || 'Someone';
-    await addDoc(collection(db, 'notifications'), {
+    // Use the Cloud Function callable — direct client writes to notifications
+    // are blocked by security rules (allow create: if false).
+    await createNotification({
       userId: targetUserId,
-      type: 'user_approved', // Reusing an existing icon mapped to ShieldCheck/User
+      type: 'new_message',
       title: 'New Follower',
       message: `${currentUserName} started following you.`,
-      read: false,
       link: `/profile/${currentUserId}`,
-      createdAt: serverTimestamp(),
     });
   } catch (e) {
     console.error('Failed to send follow notification', e);
@@ -132,7 +133,7 @@ export function useFollowCounts(userId: string | undefined) {
     });
 
     return () => { unsub1(); unsub2(); };
-  }, [userId]);
+  }, [userId, user]);
 
   return { followersCount, followingCount };
 }

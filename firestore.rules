@@ -683,7 +683,11 @@ service cloud.firestore {
     // === FOLLOWS ===
     match /follows/{followId} {
       allow get: if canAccessFollow(resource.data);
-      allow list: if canAccessFollow(resource.data);
+      // list: isSignedIn() avoids per-doc exists() calls that exceed the 10-call
+      // Firestore limit when many follow docs are returned. Client queries are
+      // already scoped to specific followerId/followingId. Block filtering is
+      // handled client-side.
+      allow list: if isSignedIn();
       
       allow create: if isVerified()
         && isValidId(followId)

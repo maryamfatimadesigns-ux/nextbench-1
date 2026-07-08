@@ -960,8 +960,13 @@ export default function Feed() {
         if (!isPostAnonymous) {
           const authorName = userData.name || user.email;
           const followsSnap = await getDocs(query(collection(db, 'follows'), where('followingId', '==', user.uid)));
-          followsSnap.forEach(f => {
-            const followerId = f.data().followerId;
+          // Cap fan-out to 14 followers to stay within the Cloud Function rate
+          // limit of 15/min. Remaining followers won't receive in-app notifs
+          // from the client — a server-side fan-out would be the ideal fix.
+          const followerIds: string[] = [];
+          followsSnap.forEach(f => followerIds.push(f.data().followerId));
+          const cappedFollowerIds = followerIds.slice(0, 14);
+          for (const followerId of cappedFollowerIds) {
             createNotification({ 
               userId: followerId, 
               type: 'new_post', 
@@ -970,7 +975,7 @@ export default function Feed() {
               link: `/post/${postDocRef.id}`,
               postId: postDocRef.id
             });
-          });
+          }
         }
       } else {
         if (!isTextClean) {

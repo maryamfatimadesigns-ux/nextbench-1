@@ -48,7 +48,7 @@ export default function Notifications() {
   });
 
   const isDeals = (type: string) => ['listing_approved', 'listing_rejected', 'item_reserved', 'item_sold', 'new_review'].includes(type);
-  const isSocial = (type: string) => ['new_message', 'mention', 'repost'].includes(type);
+  const isSocial = (type: string) => ['new_message', 'mention', 'repost', 'new_post'].includes(type);
   const isSystem = (type: string) => ['user_approved', 'admin_promoted'].includes(type);
 
   const getNotificationCategory = (type: string): 'deals' | 'social' | 'system' | 'other' => {
