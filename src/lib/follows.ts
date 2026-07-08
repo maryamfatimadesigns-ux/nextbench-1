@@ -288,7 +288,7 @@ export function useFollowersList(userId: string | undefined) {
       setFollowerIds([]);
     });
     return () => unsub();
-  }, [userId]);
+  }, [userId, user]);
 
   return followerIds;
 }
@@ -309,7 +309,7 @@ export function useFollowingList(userId: string | undefined) {
       setFollowingIds([]);
     });
     return () => unsub();
-  }, [userId]);
+  }, [userId, user]);
 
   return followingIds;
 }
