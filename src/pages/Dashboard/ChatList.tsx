@@ -362,7 +362,7 @@ export default function ChatList() {
                     key={`chat-${room.id}`}
                     className="block group px-2 md:px-0"
                   >
-                  <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
+                  <div className={`flex items-center gap-4 py-3 rounded-2xl px-2 transition-colors cursor-pointer ${isUnread ? 'bg-brand-teal/5 hover:bg-brand-teal/10' : 'group-hover:bg-surface-soft'}`}>
                     <div className="relative shrink-0">
                       <div className="w-14 h-14 rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden">
                         {room.otherUser?.profilePicture ? (
@@ -412,13 +412,14 @@ export default function ChatList() {
               );
             } else {
               const club = data as ClubData;
+              const isUnread = club.unreadBy?.includes(user?.uid || '');
               return (
                 <Link
                   to={`/club/${club.id}`}
                   key={`club-${club.id}`}
                   className="block group px-2 md:px-0"
                 >
-                  <div className="flex items-center gap-4 py-3 group-hover:bg-surface-soft rounded-2xl px-2 transition-colors cursor-pointer">
+                  <div className={`flex items-center gap-4 py-3 rounded-2xl px-2 transition-colors cursor-pointer ${isUnread ? 'bg-brand-teal/5 hover:bg-brand-teal/10' : 'group-hover:bg-surface-soft'}`}>
                     <div className="relative shrink-0">
                       <div className="w-14 h-14 rounded-xl bg-linear-to-br from-brand-teal/15 to-brand-pink/15 flex items-center justify-center overflow-hidden border border-luxury-ink/5">
                         {club.avatar ? (
