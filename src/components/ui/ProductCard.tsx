@@ -24,6 +24,7 @@ interface Product {
   sellerProfilePicture?: string;
   city?: string;
   createdAt: any;
+  badge?: string;
 }
 
 interface ProductCardProps {
@@ -199,6 +200,17 @@ export default function ProductCard({ product, isWishlisted, wishlistDocId, onSh
             <div className={`absolute left-3 bg-luxury-ink/60 backdrop-blur-sm text-white px-2.5 py-1 rounded-lg text-[10px] font-semibold z-10 ${hasMultiple ? 'bottom-6' : 'bottom-3'}`}>
               {product.category}
             </div>
+
+            {product.badge && product.badge !== 'none' && (
+              <div className={`absolute top-12 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest z-10 ${
+                product.badge === 'HOT' ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-white animate-pulse' :
+                product.badge === 'TRENDING' ? 'bg-pink-500/10 text-pink-500' :
+                product.badge === 'RISING' ? 'bg-brand-teal/10 text-brand-teal' :
+                'bg-emerald-500/10 text-emerald-500' // NEW
+              }`}>
+                {product.badge}
+              </div>
+            )}
 
             {/* SOLD overlay */}
             {product.status === 'sold' && (

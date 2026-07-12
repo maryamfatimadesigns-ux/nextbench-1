@@ -179,6 +179,7 @@ interface Post {
   repliesCount: number;
   feedScore?: number;
   isHot?: boolean;
+  badge?: string;
   city?: string;
   createdAt: any;
   poll?: {
@@ -408,11 +409,21 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {post.isHot && (
+              {post.badge && post.badge !== 'none' ? (
+                <span className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest ${
+                  post.badge === 'HOT' ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-white animate-pulse' :
+                  post.badge === 'TRENDING' ? 'bg-pink-500/10 text-pink-500' :
+                  post.badge === 'RISING' ? 'bg-brand-teal/10 text-brand-teal' :
+                  'bg-emerald-500/10 text-emerald-500' // NEW
+                }`}>
+                  {post.badge === 'HOT' && <Flame size={10} strokeWidth={2} />}
+                  {post.badge}
+                </span>
+              ) : post.isHot ? (
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded text-[10px] font-bold uppercase tracking-wide">
                   <Flame size={10} strokeWidth={2} /> Hot
                 </span>
-              )}
+              ) : null}
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${post.type === 'confession' ? 'bg-purple-500/10 text-purple-600' : 'bg-brand-teal/10 text-brand-teal'}`}>
                 {typeLabel}
               </span>
@@ -510,25 +521,30 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
         <div className="flex items-center justify-between pt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
           <div className="flex items-center gap-0.5 sm:gap-1.5 -ml-1.5 text-[14px] font-semibold">
             {/* Like */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onUpvote?.(post); }}
-              aria-label="Like"
-              className={`flex items-center gap-0.5 rounded-full transition-colors group ${hasUpvoted ? 'text-brand-pink' : 'text-luxury-ink/45 hover:text-brand-pink'}`}
+            <div
+              className={`flex items-center gap-0.5 rounded-full transition-colors group ${hasUpvoted ? 'text-brand-pink' : 'text-luxury-ink/45'}`}
             >
-              <motion.span
-                className="grid place-items-center w-10 h-10 rounded-full group-hover:bg-brand-pink/10 transition-colors"
-                whileTap={{ scale: 0.85 }}
+              <button
+                onClick={(e) => { e.stopPropagation(); onUpvote?.(post); }}
+                aria-label="Like"
+                className="grid place-items-center w-10 h-10 rounded-full hover:bg-brand-pink/10 transition-colors cursor-pointer text-inherit"
+                type="button"
               >
                 <motion.span
-                  key={likeBurst}
-                  initial={likeBurst > 0 ? { scale: 0.5 } : false}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 600, damping: 14 }}
+                  whileTap={{ scale: 0.85 }}
                   className="grid place-items-center"
                 >
-                  <Heart size={22} strokeWidth={1.75} className={hasUpvoted ? 'fill-brand-pink' : ''} />
+                  <motion.span
+                    key={likeBurst}
+                    initial={likeBurst > 0 ? { scale: 0.5 } : false}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 600, damping: 14 }}
+                    className="grid place-items-center"
+                  >
+                    <Heart size={22} strokeWidth={1.75} className={hasUpvoted ? 'fill-brand-pink' : ''} />
+                  </motion.span>
                 </motion.span>
-              </motion.span>
+              </button>
               <AnimatePresence mode="popLayout">
                 <motion.button
                   key={post.upvotesCount || 0}
@@ -536,7 +552,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
                   animate={{ y: 0, opacity: 1 }}
                   exit={{ y: 6, opacity: 0 }}
                   transition={{ duration: 0.15 }}
-                  className="tabular-nums pr-1.5 hover:underline cursor-pointer"
+                  className="tabular-nums pr-1.5 hover:underline cursor-pointer text-inherit font-semibold text-[14px]"
                   onClick={(e) => { e.stopPropagation(); if ((post.upvotesCount || 0) > 0) setShowLikedBy(true); }}
                   aria-label="See who liked this post"
                   type="button"
@@ -544,7 +560,7 @@ export default function PostCard({ post, hasUpvoted, hasDownvoted, hasSaved, onC
                   {post.upvotesCount || 0}
                 </motion.button>
               </AnimatePresence>
-            </button>
+            </div>
 
             {/* Dislike */}
             <button

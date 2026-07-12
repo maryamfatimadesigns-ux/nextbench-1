@@ -77,14 +77,27 @@ function VerificationGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function NeutralLoadingShell() {
+  return (
+    <div className="min-h-screen flex flex-col bg-surface-base">
+      <div className="h-16 px-6 border-b flex items-center justify-between bg-surface-card" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-brand-teal flex items-center justify-center text-white font-bold text-lg">N</div>
+          <span className="font-bold text-luxury-ink tracking-tight font-serif italic">Nextbench</span>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-surface-soft skeleton" />
+      </div>
+      <div className="flex-1 max-w-xl mx-auto w-full pt-8 px-4">
+        <FeedSkeleton />
+      </div>
+    </div>
+  );
+}
+
 function SmartHome() {
   const { user, loading } = useAuth();
   if (loading) {
-    return (
-      <DashboardLayout>
-        <FeedSkeleton />
-      </DashboardLayout>
-    );
+    return <NeutralLoadingShell />;
   }
   if (user) {
     return (

@@ -61,7 +61,7 @@ export default function SmartImage({
   // Build Low-Quality Image Placeholder (LQIP) URL
   const getCloudinaryLqip = (url: string) => {
     if (!isCloudinary || !url.includes('/upload/')) return undefined;
-    return url.replace('/upload/', '/upload/f_auto,q_auto,w_32,c_limit,e_blur:400/');
+    return url.replace('/upload/', '/upload/f_auto,q_auto,w_24,e_blur:400,q_30/');
   };
 
   // Fallback optimal URL for src
