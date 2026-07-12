@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useReducer, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3, ChevronLeft, ChevronRight, Paperclip, Film, Pencil } from 'lucide-react';
-import { collection, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs } from 'firebase/firestore';
+import { Plus, X, Search, MapPin, School, GraduationCap, Calendar, FileText, Info, ArrowBigUp, MessageSquare, Flame, Share2, Image as ImageIcon, Trash2, Heart, Users, Grid3X3, UserCheck, Bookmark, MoreHorizontal, Globe, Lock, Settings, BarChart3, ChevronLeft, ChevronRight, Paperclip, Film, Pencil, RefreshCw } from 'lucide-react';
+import { collection, query, where, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
@@ -30,6 +30,7 @@ import { savePost, unsavePost } from '../../lib/saves';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { deletePostCascade, getDiscoveryFeed } from '../../lib/discovery';
 import { PostCardSkeleton } from '../../components/ui/skeleton/Skeleton';
+import SuggestedUsers from '../../components/ui/SuggestedUsers';
 
 // Minimal spinner used as Suspense fallback for lazy components
 const LazyFallback = () => (
@@ -253,7 +254,15 @@ export default function Feed() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [submittingStatus, setSubmittingStatus] = useState('Posting...');
-  const [contentType, setContentType] = useState<'all' | 'posts' | 'marketplace'>('all');
+  const [activeFeedTab, setActiveFeedTab] = useState<'for-you' | 'following' | 'posts' | 'marketplace'>('for-you');
+  const [feedOrder, setFeedOrder] = useState<Array<{ id: string; type: string }>>([]);
+  const [newPostsCount, setNewPostsCount] = useState(0);
+  const pageLoadTimeRef = useRef(Date.now());
+  const contentType = activeFeedTab === 'marketplace' ? 'marketplace' : activeFeedTab === 'posts' ? 'posts' : 'all';
+  const setContentType = (val: 'all' | 'posts' | 'marketplace') => {
+    if (val === 'all') setActiveFeedTab('for-you');
+    else setActiveFeedTab(val);
+  };
 
   const { user, userData } = useAuth();
   const { showToast } = useToast();
@@ -392,88 +401,104 @@ export default function Feed() {
   const setPollHours = (v: number) => setPollState(s => ({ ...s, hours: v }));
   const setPollMinutes = (v: number) => setPollState(s => ({ ...s, minutes: v }));
 
-  // Discovery feed is served through a callable so block relationships are
-  // enforced before posts/listings reach the client.
+  // ─── Fetch / Pagination logic ──────────────────────────────────
+  const fetchInitialFeed = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getDiscoveryFeed({
+        mode: activeFeedTab === 'following' ? 'following' : 'for-you'
+      });
+      setRawPosts((data.posts || []) as Post[]);
+      setProducts((data.products || []) as Product[]);
+      setFeedOrder((data.order || []) as Array<{ id: string; type: string }>);
+      setFeedCursor(data.nextCursor || {});
+      setHasMorePosts(data.hasMorePosts);
+      setHasMoreProducts(data.hasMoreProducts);
+    } catch (err) {
+      console.error('Error fetching feed:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.uid, activeFeedTab]);
+
   useEffect(() => {
-    let cancelled = false;
-
-    const fetchInitialFeed = async () => {
-      try {
-        const data = await getDiscoveryFeed();
-        if (cancelled) return;
-        setRawPosts(data.posts as Post[]);
-        setProducts(data.products as Product[]);
-        setFeedCursor(data.nextCursor || {});
-        setHasMorePosts(data.hasMorePosts);
-        setHasMoreProducts(data.hasMoreProducts);
-      } catch (err) {
-        console.error('Error fetching feed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
     fetchInitialFeed();
-    return () => { cancelled = true; };
-  }, [user?.uid]);
+  }, [fetchInitialFeed]);
 
-  // Feed scoring — Instagram-style curated algorithm
+  // Real-time "New posts ↑" listener
+  useEffect(() => {
+    if (!user || !userData?.school || activeFeedTab === 'following') {
+      setNewPostsCount(0);
+      return;
+    }
+    const q = query(
+      collection(db, 'posts'),
+      where('school', '==', userData.school),
+      where('status', '==', 'approved'),
+      where('createdAt', '>', new Date(pageLoadTimeRef.current))
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const count = snap.docs.filter(doc => !doc.metadata.hasPendingWrites).length;
+      setNewPostsCount(count);
+    }, (err) => {
+      console.warn('Feed: new posts listener error:', err.code);
+    });
+    return () => unsub();
+  }, [user?.uid, userData?.school, activeFeedTab]);
+
+  // Hysteresis-stable badges listener
+  const [trendingBadges, setTrendingBadges] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!user || !userData?.school) return;
+    let active = true;
+
+    const getSchoolKey = async (schoolName: string) => {
+      const msgBuffer = new TextEncoder().encode(schoolName);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      return hashHex.slice(0, 24);
+    };
+
+    getSchoolKey(userData.school).then(schoolKey => {
+      if (!active) return;
+      const unsub = onSnapshot(doc(db, 'computed', `trending_${schoolKey}`), (snap) => {
+        if (snap.exists() && active) {
+          setTrendingBadges(snap.get("badges") || {});
+        }
+      }, (err) => {
+        console.warn('Feed: trending badges listener error:', err.code);
+      });
+      return () => { unsub(); };
+    }).catch(err => {
+      console.error('Failed to get school key for badges:', err);
+    });
+
+    return () => { active = false; };
+  }, [user?.uid, userData?.school]);
+
+  // Feed scoring adapter — map isHot locally
   const posts = useMemo(() => {
-    const now = Date.now();
-    const authorPostCount: Record<string, number> = {};
+    return rawPosts.map(post => ({
+      ...post,
+      isHot: trendingBadges[post.id] === 'HOT',
+      badge: trendingBadges[post.id] || 'none'
+    }));
+  }, [rawPosts, trendingBadges]);
 
-    const scored = rawPosts.map(post => {
-      const postTime = timestampMillis(post.createdAt) || now;
-      const hoursPassed = Math.max(0, (now - postTime) / (1000 * 60 * 60));
-
-      // 1. Base Engagement (Hype)
-      const baseHype = 1 + (post.upvotesCount || 0) * 2 + (post.repliesCount || 0) * 3;
-
-      // 2. Exponential Time Decay (Gravity)
-      // (hours + 2)^1.5 creates a smooth curve where fresh content is boosted 
-      // but highly engaging older content can still surface
-      const timeFactor = Math.pow(hoursPassed + 2, 1.5);
-
-      // 3. Affinity Multipliers (Relevance)
-      let affinityMultiplier = 1.0;
-      if (userData?.city && post.city === userData.city) affinityMultiplier += 0.1;
-      if (userData?.school && post.school === userData.school) affinityMultiplier += 0.2;
-      if (followingIds.has(post.authorId)) affinityMultiplier += 0.5;
-      if (friendIds.has(post.authorId)) affinityMultiplier += 0.8;
-
-      // 4. Diversity Penalty (Anti-Spam)
-      authorPostCount[post.authorId] = (authorPostCount[post.authorId] || 0) + 1;
-      // 0.6x multiplier for each subsequent post by the same author in this batch
-      const diversityMultiplier = Math.pow(0.6, Math.max(0, authorPostCount[post.authorId] - 1));
-
-      // Final Score Calculation
-      const feedScore = (baseHype / timeFactor) * affinityMultiplier * diversityMultiplier;
-
-      // Hot status: High base hype relative to its age
-      const isHot = baseHype >= 15 && hoursPassed < 48;
-
-      return { ...post, feedScore, isHot };
-    });
-
-    scored.sort((a, b) => {
-      if (a.feedScore !== b.feedScore) return (b.feedScore || 0) - (a.feedScore || 0);
-      const timeA = timestampMillis(a.createdAt);
-      const timeB = timestampMillis(b.createdAt);
-      return timeB - timeA;
-    });
-
-    return scored;
-  }, [rawPosts, userData, followingIds, friendIds]);
-
-  // ─── Load more (cursor-based pagination) ────────────────────────
   const loadMoreFeed = useCallback(async () => {
     if (isLoadingMore) return;
     if (!hasMorePosts && !hasMoreProducts) return;
     setIsLoadingMore(true);
 
     try {
-      const data = await getDiscoveryFeed(feedCursor);
-      setRawPosts(prev => [...prev, ...(data.posts as Post[])]);
-      setProducts(prev => [...prev, ...(data.products as Product[])]);
+      const data = await getDiscoveryFeed({
+        mode: activeFeedTab === 'following' ? 'following' : 'for-you',
+        ...feedCursor
+      });
+      setRawPosts(prev => [...prev, ...((data.posts || []) as Post[])]);
+      setProducts(prev => [...prev, ...((data.products || []) as Product[])]);
+      setFeedOrder(prev => [...prev, ...((data.order || []) as Array<{ id: string; type: string }>)]);
       setFeedCursor(data.nextCursor || {});
       setHasMorePosts(data.hasMorePosts);
       setHasMoreProducts(data.hasMoreProducts);
@@ -482,7 +507,7 @@ export default function Feed() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, hasMorePosts, hasMoreProducts, feedCursor]);
+  }, [isLoadingMore, hasMorePosts, hasMoreProducts, feedCursor, activeFeedTab]);
 
   // \u2500\u2500\u2500 Background pre-upload when file is selected \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(() => {
@@ -1326,21 +1351,65 @@ export default function Feed() {
 
   const combinedFeed = useMemo(() => {
     let combined: any[] = [];
-    if (contentType === 'all' || contentType === 'posts') {
-      combined = [...combined, ...filteredPosts.map(p => ({ ...p, _kind: 'post' }))];
+    if (activeFeedTab === 'following') {
+      combined = filteredPosts.map(p => ({ ...p, _kind: 'post' }));
+      combined.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+    } else if (activeFeedTab === 'posts') {
+      combined = filteredPosts.map(p => ({ ...p, _kind: 'post' }));
+      combined.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+    } else if (activeFeedTab === 'marketplace') {
+      combined = filteredProducts.map(p => ({ ...p, _kind: 'product' }));
+      combined.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+    } else {
+      // 'for-you' tab: reconstruct using feedOrder from server
+      if (feedOrder && feedOrder.length > 0) {
+        const postMap = new Map(filteredPosts.map(p => [p.id, p]));
+        const prodMap = new Map(filteredProducts.map(p => [p.id, p]));
+        const postsList: any[] = [];
+        const productsList: any[] = [];
+
+        feedOrder.forEach((item: any) => {
+          if (item.type === 'post') {
+            const p = postMap.get(item.id);
+            if (p) postsList.push({ ...p, _kind: 'post' });
+          } else if (item.type === 'product') {
+            const p = prodMap.get(item.id);
+            if (p) productsList.push({ ...p, _kind: 'product' });
+          }
+        });
+
+        // Mix: 1 product per 6 posts
+        let postIdx = 0;
+        let prodIdx = 0;
+        while (postIdx < postsList.length) {
+          for (let k = 0; k < 6 && postIdx < postsList.length; k++) {
+            combined.push(postsList[postIdx++]);
+          }
+          if (prodIdx < productsList.length) {
+            combined.push(productsList[prodIdx++]);
+          }
+        }
+        while (prodIdx < productsList.length) {
+          combined.push(productsList[prodIdx++]);
+        }
+      } else {
+        // Fallback: mix posts and products sorted by time
+        combined = [
+          ...filteredPosts.map(p => ({ ...p, _kind: 'post' })),
+          ...filteredProducts.map(p => ({ ...p, _kind: 'product' }))
+        ];
+        combined.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+      }
     }
-    if (contentType === 'all' || contentType === 'marketplace') {
-      combined = [...combined, ...filteredProducts.map(p => ({ ...p, _kind: 'product' }))];
+
+    // SuggestedUsers inline card at slot 8 (index 7) on mobile
+    const isMobile = window.innerWidth < 768;
+    if (isMobile && combined.length >= 8) {
+      combined.splice(7, 0, { _kind: 'suggested_users_ad' });
     }
-    
-    // Sort combined by feedScore (for posts) and time
-    combined.sort((a, b) => {
-      const timeA = timestampMillis(a.createdAt);
-      const timeB = timestampMillis(b.createdAt);
-      return timeB - timeA;
-    });
+
     return combined;
-  }, [filteredPosts, filteredProducts, contentType]);
+  }, [filteredPosts, filteredProducts, feedOrder, activeFeedTab]);
 
   // Get unique recent authors for story-style row
   const recentAuthors = useMemo(() => {
@@ -1380,17 +1449,28 @@ export default function Feed() {
   // Renders a single feed row (post or product card), injecting the "Clubs for
   // you" row after the 3rd item just like the original non-virtualized list.
   const renderFeedItem = (item: any, index: number) => {
+    if (item._kind === 'suggested_users_ad') {
+      return (
+        <div className="py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+          <SuggestedUsers />
+        </div>
+      );
+    }
+
+    const badge = trendingBadges[item.id] || 'none';
+    const itemWithBadge = { ...item, badge };
+
     const isProduct = item._kind === 'product';
     const card = isProduct ? (
       <ProductCard
-        product={item as Product}
+        product={itemWithBadge as Product}
         isWishlisted={wishlisted.has(item.id)}
         wishlistDocId={wishlistMap[item.id]}
         onShare={handleShareProduct}
       />
     ) : (
       <PostCard
-        post={item as Post}
+        post={itemWithBadge as Post}
         hasUpvoted={upvotedPostIds.has(item.id)}
         hasDownvoted={downvotedPostIds.has(item.id)}
         hasSaved={savedPostIds.has(item.id)}
@@ -1434,17 +1514,18 @@ export default function Feed() {
       {/* Sticky Header Tabs */}
       <div className="sticky top-0 z-40 nav-glass border-b flex items-center px-2 sm:px-4 gap-0.5" style={{ borderColor: 'var(--color-border)' }}>
         {([
-          { id: 'all', label: 'For you' },
+          { id: 'for-you', label: 'For you' },
+          { id: 'following', label: 'Following' },
           { id: 'posts', label: 'Posts' },
           { id: 'marketplace', label: 'Marketplace' },
         ] as const).map((tab) => (
           <button
             key={tab.id}
-            onClick={() => { setContentType(tab.id); }}
-            className={`relative py-4 px-3 sm:px-4 text-sm font-semibold transition-colors whitespace-nowrap rounded-t-lg ${contentType === tab.id ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70 hover:bg-surface-soft/50'}`}
+            onClick={() => { setActiveFeedTab(tab.id); }}
+            className={`relative py-4 px-3 sm:px-4 text-sm font-semibold transition-colors whitespace-nowrap rounded-t-lg ${activeFeedTab === tab.id ? 'text-luxury-ink' : 'text-luxury-ink/40 hover:text-luxury-ink/70 hover:bg-surface-soft/50'}`}
           >
             {tab.label}
-            {contentType === tab.id && (
+            {activeFeedTab === tab.id && (
               <motion.div
                 layoutId="feed-tab-underline"
                 className="absolute -bottom-px left-2 right-2 sm:left-3 sm:right-3 h-[3px] rounded-full bg-brand-pink"
@@ -1499,6 +1580,21 @@ export default function Feed() {
       ) : (
         <>
           <div ref={feedListRef} className="flex flex-col w-full min-w-0">
+            {newPostsCount > 0 && (
+              <div className="sticky top-16 z-30 flex justify-center w-full pointer-events-none mt-4 mb-2">
+                <button
+                  onClick={() => {
+                    pageLoadTimeRef.current = Date.now();
+                    setNewPostsCount(0);
+                    fetchInitialFeed();
+                  }}
+                  className="pointer-events-auto bg-brand-teal text-white px-5 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider shadow-xl flex items-center gap-2 hover:scale-105 active:scale-95 transition-all"
+                >
+                  <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
+                  New posts available ↑
+                </button>
+              </div>
+            )}
             {/* Virtualized feed — only visible rows + 5 overscan are in the DOM */}
             {combinedFeed.length > 0 && (
               <div style={{ height: `${feedVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
