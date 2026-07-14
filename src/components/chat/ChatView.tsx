@@ -29,6 +29,8 @@ import {
   Pin
 } from 'lucide-react';
 
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { useLightbox } from '../../lib/LightboxContext';
@@ -539,6 +541,11 @@ export default function ChatView({
                     </button>
                   )}
 
+                  {/* Sender Avatar (Group Chats Only) */}
+                  {isClub && !isMe && !isDeleted && (
+                    <ClubSenderAvatar msg={msg} />
+                  )}
+
                   {/* Message Bubble Box */}
                   <div
                     onClick={(e) => {
@@ -570,7 +577,7 @@ export default function ChatView({
                     {/* Sender Name (Group Chats Only) */}
                     {isClub && !isMe && !isDeleted && (
                       <div className="text-[11px] font-bold text-brand-teal mb-1 leading-tight tracking-wide">
-                        {msg.senderName || 'Member'}
+                        <ClubSenderName msg={msg} />
                       </div>
                     )}
 
@@ -981,4 +988,51 @@ export default function ChatView({
       </AnimatePresence>
     </div>
   );
+}
+
+function ClubSenderAvatar({ msg }: { msg: Message }) {
+  const [profile, setProfile] = useState<{ name: string, avatar: string | null } | null>(null);
+
+  useEffect(() => {
+    if (msg.senderName) return; // Already have it!
+    let isMounted = true;
+    getDoc(doc(db, 'users', msg.senderId)).then(snap => {
+      if (snap.exists() && isMounted) {
+        setProfile({ name: snap.data().name || 'Member', avatar: snap.data().profilePicture || null });
+      }
+    });
+    return () => { isMounted = false; };
+  }, [msg.senderId, msg.senderName]);
+
+  const name = msg.senderName || profile?.name || 'Member';
+  const avatar = msg.senderAvatar !== undefined ? msg.senderAvatar : profile?.avatar;
+
+  return (
+    <div className="w-7 h-7 rounded-full bg-luxury-ink/10 flex items-center justify-center overflow-hidden shrink-0 self-end mb-1">
+      {avatar ? (
+        <img src={avatar} alt={name} className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-[10px] font-bold text-luxury-ink/50 uppercase">
+          {name.charAt(0)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ClubSenderName({ msg }: { msg: Message }) {
+  const [name, setName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (msg.senderName) return; // Already have it!
+    let isMounted = true;
+    getDoc(doc(db, 'users', msg.senderId)).then(snap => {
+      if (snap.exists() && isMounted) {
+        setName(snap.data().name || 'Member');
+      }
+    });
+    return () => { isMounted = false; };
+  }, [msg.senderId, msg.senderName]);
+
+  return <>{msg.senderName || name || 'Member'}</>;
 }
