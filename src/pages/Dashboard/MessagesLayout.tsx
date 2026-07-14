@@ -2,7 +2,7 @@
  * MessagesLayout.tsx
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { MessageSquare, User, ShieldCheck, Search, Lock, Plus, X, Send, Users, Globe, Crown, ArrowLeft } from 'lucide-react';
@@ -39,15 +39,17 @@ export default function MessagesLayout() {
   const { user, userData } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { roomId: routeRoomId, clubId: routeClubId } = useParams<{ roomId?: string; clubId?: string }>();
+  const { roomId: routeRoomId } = useParams<{ roomId?: string }>();
   const { showToast } = useToast();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Derived from router state
-  const activeRoomId = routeRoomId || routeClubId || null;
-  const activeRoomType = routeClubId ? 'club' : 'chat';
-  const activeRoomState = location.state || null;
+  // The "active" chat — either from URL param or clicked in sidebar
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(routeRoomId || null);
+  const [activeRoomState, setActiveRoomState] = useState<any>(location.state || null);
+
+  // Component-scoped user profile cache — prevents duplicate fetches, clears on unmount
+  const userCacheRef = useRef<{ [key: string]: Promise<any> }>({});
 
   const [chatRooms, setChatRooms] = useState<ChatRoomItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +63,7 @@ export default function MessagesLayout() {
   const [creatingDM, setCreatingDM] = useState(false);
 
   // Clubs
+  const [activeRoomType, setActiveRoomType] = useState<'chat' | 'club'>('chat');
   const [showCreateClub, setShowCreateClub] = useState(false);
   const [clubName, setClubName] = useState('');
   const [clubDescription, setClubDescription] = useState('');
@@ -81,10 +84,18 @@ export default function MessagesLayout() {
     return () => window.removeEventListener('messages-sidebar-toggle', handleToggle);
   }, []);
 
+  // Keep activeRoomId in sync when the URL param changes (deep-link / browser navigation)
+  useEffect(() => {
+    setActiveRoomId(routeRoomId || null);
+    setActiveRoomType('chat'); // if loading from /messages/:roomId, it's a chat
+    setActiveRoomState(location.state || null);
+  }, [routeRoomId]);
+
+
+
   // Load chat rooms
   useEffect(() => {
     if (!user) return;
-    const userCache: { [key: string]: any } = {};
 
     const q = query(
       collection(db, 'chatRooms'),
@@ -96,36 +107,53 @@ export default function MessagesLayout() {
         const rooms: ChatRoomItem[] = [];
         const uncachedUserIds = new Set<string>();
 
+        // Identify which users need to be fetched
         for (const roomDoc of snapshot.docs) {
           const data = roomDoc.data() as ChatRoomItem;
           const otherUserId = data.participants.find(id => id !== user.uid);
-          if (otherUserId && !userCache[otherUserId]) uncachedUserIds.add(otherUserId);
-        }
-
-        if (uncachedUserIds.size > 0) {
-          await Promise.all(
-            Array.from(uncachedUserIds).map(async (userId) => {
-              try {
-                const uDoc = await getDoc(doc(db, 'users', userId));
-                userCache[userId] = uDoc.exists()
-                  ? { id: userId, ...uDoc.data() }
-                  : { id: userId, name: 'Deleted User' };
-              } catch {
-                // Permission denied — likely a blocked user.  Don't let one
-                // failed read break the entire chat list; the room will be
-                // filtered out by allBlockedIds in the loop below anyway.
-                userCache[userId] = { id: userId, name: 'User' };
-              }
-            })
-          );
-        }
-
-        for (const roomDoc of snapshot.docs) {
-          const data = roomDoc.data() as ChatRoomItem;
-          const otherUserId = data.participants.find(id => id !== user.uid);
-          if (otherUserId && !allBlockedIds.has(otherUserId)) {
-            rooms.push({ id: roomDoc.id, ...data, otherUser: userCache[otherUserId] });
+          if (otherUserId && !userCacheRef.current[otherUserId]) {
+            uncachedUserIds.add(otherUserId);
           }
+        }
+
+        // Trigger fetches for any new users
+        if (uncachedUserIds.size > 0) {
+          Array.from(uncachedUserIds).forEach((userId) => {
+            userCacheRef.current[userId] = getDoc(doc(db, 'users', userId))
+              .then((uDoc) => {
+                return uDoc.exists()
+                  ? { id: userId, ...uDoc.data() }
+                  : { id: userId, name: 'Deleted User', profilePicture: null };
+              })
+              .catch(() => {
+                return { id: userId, name: 'User', profilePicture: null };
+              });
+          });
+        }
+
+        // Wait for all user profiles in the current rooms to resolve
+        const resolvedUsersList = await Promise.all(
+          snapshot.docs.map(async (roomDoc) => {
+            const data = roomDoc.data() as ChatRoomItem;
+            const otherUserId = data.participants.find(id => id !== user.uid);
+            if (!otherUserId) return null;
+
+            const otherUser = await userCacheRef.current[otherUserId];
+            return { roomId: roomDoc.id, otherUser };
+          })
+        );
+
+        const usersMap = Object.fromEntries(
+          resolvedUsersList.filter(Boolean).map((x: any) => [x.roomId, x.otherUser])
+        );
+
+        for (const roomDoc of snapshot.docs) {
+          const data = roomDoc.data() as ChatRoomItem;
+          rooms.push({
+            id: roomDoc.id,
+            ...data,
+            otherUser: usersMap[roomDoc.id],
+          });
         }
 
         rooms.sort((a, b) => {
@@ -208,19 +236,25 @@ export default function MessagesLayout() {
     }
   };
 
-  // Open a chat — on desktop: route inside panel. On mobile: route full screen.
+  // Open a chat — on desktop: set active panel. On mobile: navigate.
   const openChat = (roomId: string, state?: any, type: 'chat' | 'club' = 'chat') => {
     const isDesktop = window.innerWidth >= 768;
     if (isDesktop) {
-      navigate(type === 'club' ? `/messages/club/${roomId}` : `/messages/${roomId}`, { state });
+      setActiveRoomId(roomId);
+      setActiveRoomType(type);
+      setActiveRoomState(state || null);
+      // Update URL without full navigation so back button still works
+      window.history.pushState({}, '', type === 'club' ? `/club/${roomId}` : `/messages/${roomId}`);
     } else {
       navigate(type === 'club' ? `/club/${roomId}` : `/chat/${roomId}`, { state });
     }
   };
 
-  // ChatRoom/ClubChat needs a way to "go back"
+  // Close chat panel — on desktop just clears local state
   const handleChatBack = () => {
-    navigate('/messages');
+    setActiveRoomId(null);
+    setActiveRoomState(null);
+    window.history.pushState({}, '', '/messages');
   };
 
   if (userData && !userData.verified) {
@@ -490,16 +524,18 @@ export default function MessagesLayout() {
         {activeRoomId ? (
           <div className="flex-1 flex flex-col overflow-hidden relative">
             {activeRoomType === 'club' ? (
-              <ClubChatPanel
+              <ClubChat
                 key={activeRoomId}
-                clubId={activeRoomId}
+                panelMode
+                roomIdOverride={activeRoomId}
                 onBack={handleChatBack}
               />
             ) : (
-              <ChatRoomPanel
+              <ChatRoom
                 key={activeRoomId}
-                roomId={activeRoomId}
-                initialState={activeRoomState}
+                panelMode
+                roomIdOverride={activeRoomId}
+                panelState={activeRoomState}
                 onBack={handleChatBack}
               />
             )}
@@ -634,46 +670,5 @@ export default function MessagesLayout() {
         )}
       </AnimatePresence>
     </>
-  );
-}
-
-/**
- * ChatRoomPanel — wraps ChatRoom in panel mode for the desktop two-pane layout.
- */
-function ChatRoomPanel({
-  roomId,
-  initialState,
-  onBack,
-}: {
-  roomId: string;
-  initialState: any;
-  onBack: () => void;
-}) {
-  // Push URL state so ChatRoom can read location.state for otherUser/roomData
-  useEffect(() => {
-    window.history.replaceState(initialState || {}, '', `/messages/${roomId}`);
-  }, [roomId]);
-
-  return (
-    <ChatRoom panelMode roomIdOverride={roomId} onBack={onBack} />
-  );
-}
-
-/**
- * ClubChatPanel — wraps ClubChat in panel mode for the desktop two-pane layout.
- */
-function ClubChatPanel({
-  clubId,
-  onBack,
-}: {
-  clubId: string;
-  onBack: () => void;
-}) {
-  useEffect(() => {
-    window.history.replaceState({}, '', `/club/${clubId}`);
-  }, [clubId]);
-
-  return (
-    <ClubChat panelMode roomIdOverride={clubId} onBack={onBack} />
   );
 }

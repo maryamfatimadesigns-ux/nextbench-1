@@ -1456,7 +1456,7 @@ exports.getDiscoveryFeed = (0, https_1.onCall)({ invoker: "public", cors: CORS_O
         const viewer = await db.collection("users").doc(uid).get();
         const school = viewer.get("school");
         if (typeof school === "string" && school) {
-            const schoolKey = crypto.createHash("sha256").update(school).digest("hex").slice(0, 24);
+            const schoolKey = crypto.createHash("sha256").update(school.trim().toLowerCase()).digest("hex").slice(0, 24);
             const [poolSnap, affinitySnap, followingSnap] = await Promise.all([
                 db.collection("computed").doc(`feed_pool_${schoolKey}`).get(),
                 db.collection("user_affinity").doc(uid).get(),
@@ -2260,7 +2260,7 @@ exports.computeDerived = (0, scheduler_1.onSchedule)({ schedule: "every 10 minut
         })
             .sort((a, b) => b.score - a.score);
         const productsPool = rankedProducts.slice(0, 100);
-        const schoolKey = crypto.createHash("sha256").update(school).digest("hex").slice(0, 24);
+        const schoolKey = crypto.createHash("sha256").update(school.trim().toLowerCase()).digest("hex").slice(0, 24);
         const prevTrendingSnap = await db.collection("computed").doc(`trending_${schoolKey}`).get();
         const prevBadgesState = prevTrendingSnap.get("badgesState") || {};
         const newBadgesState = {};
@@ -2520,7 +2520,6 @@ exports.getSuggestedUsers = (0, https_1.onCall)({ invoker: "public", cors: CORS_
         followingList.length > 0
             ? db.collection("follows")
                 .where("followingId", "in", candidateIds)
-                .where("followerId", "in", followingList)
                 .get()
             : Promise.resolve({ docs: [] }),
         db.collection("user_affinity").where(admin.firestore.FieldPath.documentId(), "in", candidateIds).get(),
@@ -2530,7 +2529,8 @@ exports.getSuggestedUsers = (0, https_1.onCall)({ invoker: "public", cors: CORS_
     const mutualFollowsCount = {};
     mutualSnap.docs.forEach((d) => {
         const followingId = d.get("followingId");
-        if (typeof followingId === "string") {
+        const followerId = d.get("followerId");
+        if (typeof followingId === "string" && typeof followerId === "string" && following.has(followerId)) {
             mutualFollowsCount[followingId] = (mutualFollowsCount[followingId] || 0) + 1;
         }
     });

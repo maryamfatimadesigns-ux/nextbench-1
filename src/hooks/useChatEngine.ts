@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   collection,
   query,
@@ -67,6 +67,48 @@ export function useChatEngine({
   const limitRef = useRef(50);
   limitRef.current = limitCount;
 
+  // Helper to generate the metadata update object for a room/club
+  const getRoomMetadataUpdate = useCallback(
+    async (lastMsgText: string) => {
+      const updateData: any = {
+        lastMessage: lastMsgText,
+        lastSenderId: user.uid,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (collectionPath === 'clubs') {
+        updateData.lastSenderName = userData?.name || 'Unknown';
+        try {
+          const clubSnap = await getDoc(doc(db, 'clubs', roomId));
+          if (clubSnap.exists()) {
+            const clubData = clubSnap.data();
+            const members = new Set<string>();
+            if (clubData.leadId) members.add(clubData.leadId);
+            if (Array.isArray(clubData.coLeadIds)) {
+              clubData.coLeadIds.forEach((id: string) => members.add(id));
+            }
+            if (Array.isArray(clubData.memberIds)) {
+              clubData.memberIds.forEach((id: string) => members.add(id));
+            }
+            // Remove self
+            members.delete(user.uid);
+            if (members.size > 0) {
+              updateData.unreadBy = arrayUnion(...Array.from(members));
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to get club members for unreadBy:', err);
+        }
+      } else if (recipientId) {
+        updateData.unreadBy = arrayUnion(recipientId);
+      }
+
+      return updateData;
+    },
+    [user?.uid, userData?.name, collectionPath, roomId, recipientId]
+  );
+
+  // Mark room as read for user
   // Mark room as read for user — only writes if user is actually in unreadBy
   const markAsRead = useCallback(async () => {
     if (!user || !roomId) return;
@@ -78,8 +120,15 @@ export function useChatEngine({
       const unreadBy: string[] = data?.unreadBy || [];
       if (!unreadBy.includes(user.uid)) return; // Already read — skip the write
       await updateDoc(roomRef, {
+      
+      const updatePayload: any = {
         unreadBy: arrayRemove(user.uid),
-      });
+      };
+      // Firestore security rules for clubs require updatedAt == request.time on any update
+      if (collectionPath === 'clubs') {
+        updatePayload.updatedAt = serverTimestamp();
+      }
+      await updateDoc(roomRef, updatePayload);
     } catch (err) {
       console.error('Failed to mark chat as read:', err);
     }
@@ -167,44 +216,8 @@ export function useChatEngine({
           // 1. Write the message document
           await addDoc(collection(db, collectionPath, roomId, 'messages'), msgData);
 
-          // 2. Update room metadata
-          const updateData: any = {
-            lastMessage: msg.image ? '📷 Image' : msg.text,
-            lastSenderId: user.uid,
-            updatedAt: serverTimestamp(),
-          };
-
-          if (collectionPath === 'clubs') {
-            updateData.lastSenderName = userData?.name || 'Unknown';
-          }
-
-          if (recipientId) {
-            updateData.unreadBy = arrayUnion(recipientId);
-          } else if (collectionPath === 'clubs') {
-            // For clubs, unreadBy holds all other members
-            try {
-              const clubSnap = await getDoc(doc(db, 'clubs', roomId));
-              if (clubSnap.exists()) {
-                const clubData = clubSnap.data();
-                const members = new Set<string>();
-                if (clubData.leadId) members.add(clubData.leadId);
-                if (Array.isArray(clubData.coLeadIds)) {
-                  clubData.coLeadIds.forEach((id: string) => members.add(id));
-                }
-                if (Array.isArray(clubData.memberIds)) {
-                  clubData.memberIds.forEach((id: string) => members.add(id));
-                }
-                // Remove self
-                members.delete(user.uid);
-                if (members.size > 0) {
-                  updateData.unreadBy = arrayUnion(...Array.from(members));
-                }
-              }
-            } catch (err) {
-              console.warn('Failed to get club members for unreadBy:', err);
-            }
-          }
-
+          // 2. Update room metadata using consolidated helper
+          const updateData = await getRoomMetadataUpdate(msg.image ? '📷 Image' : msg.text);
           await updateDoc(doc(db, collectionPath, roomId), updateData);
 
           // 3. Remove from optimistic list
@@ -225,7 +238,7 @@ export function useChatEngine({
 
       await performSend(newOptimisticMsg);
     },
-    [user, roomId, userData, collectionPath, recipientId, isBlocked, onMessageSent]
+    [user, roomId, userData, collectionPath, isBlocked, onMessageSent, getRoomMetadataUpdate]
   );
 
   // Retry failed optimistic message
@@ -256,17 +269,7 @@ export function useChatEngine({
 
         await addDoc(collection(db, collectionPath, roomId, 'messages'), msgData);
 
-        const updateData: any = {
-          lastMessage: msg.image ? '📷 Image' : msg.text,
-          lastSenderId: user.uid,
-          updatedAt: serverTimestamp(),
-        };
-        if (collectionPath === 'clubs') {
-          updateData.lastSenderName = userData?.name || 'Unknown';
-        }
-        if (recipientId) {
-          updateData.unreadBy = arrayUnion(recipientId);
-        }
+        const updateData = await getRoomMetadataUpdate(msg.image ? '📷 Image' : msg.text);
         await updateDoc(doc(db, collectionPath, roomId), updateData);
 
         setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempId));
@@ -278,7 +281,7 @@ export function useChatEngine({
         );
       }
     },
-    [optimisticMessages, user, roomId, userData, collectionPath, recipientId, onMessageSent]
+    [optimisticMessages, user, roomId, collectionPath, onMessageSent, getRoomMetadataUpdate]
   );
 
   const removeFailedMessage = useCallback((tempId: string) => {
@@ -337,32 +340,20 @@ export function useChatEngine({
         // Write the message document
         await addDoc(collection(db, collectionPath, roomId, 'messages'), messageData);
 
-        // Update room metadata
-        const updateData: Record<string, any> = {
-          lastMessage: '🎤 Voice message',
-          lastSenderId: user.uid,
-          updatedAt: serverTimestamp(),
-        };
-
-        if (collectionPath === 'clubs') {
-          updateData.lastSenderName = userData?.name || 'Unknown';
-        }
-
-        if (recipientId) {
-          updateData.unreadBy = arrayUnion(recipientId);
-        }
-
+        // Update room metadata using consolidated helper
+        const updateData = await getRoomMetadataUpdate('🎤 Voice message');
         await updateDoc(doc(db, collectionPath, roomId), updateData);
       } catch (err) {
         console.error('Failed to send voice message:', err);
         throw err;
       }
     },
-    [user, roomId, userData, collectionPath, recipientId]
+    [user, roomId, collectionPath, getRoomMetadataUpdate]
   );
 
-  // Merge Firestore-synced real messages with pending/failed optimistic ones
-  const mergedMessages = (() => {
+  // Merge Firestore-synced real messages with pending/failed optimistic ones.
+  // useMemo prevents the O(n log n) sort from running on every render (e.g. on each keystroke).
+  const mergedMessages = useMemo(() => {
     const realClientIds = new Set(messages.map((m) => m.clientMessageId).filter(Boolean));
     const pending = optimisticMessages.filter((m) => !realClientIds.has(m.id));
 
@@ -372,11 +363,11 @@ export function useChatEngine({
         if (m.createdAt instanceof Date) return m.createdAt.getTime();
         if (typeof m.createdAt === 'string') return new Date(m.createdAt).getTime();
         if (typeof m.createdAt === 'number') return m.createdAt;
-        return 0;
+        return Date.now(); // Fallback to current time for pending serverTimestamp
       };
       return getVal(a) - getVal(b);
     });
-  })();
+  }, [messages, optimisticMessages]);
 
   return {
     messages: mergedMessages,

@@ -454,7 +454,7 @@ export default function Feed() {
     let active = true;
 
     const getSchoolKey = async (schoolName: string) => {
-      const msgBuffer = new TextEncoder().encode(schoolName);
+      const msgBuffer = new TextEncoder().encode(schoolName.trim().toLowerCase());
       const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
