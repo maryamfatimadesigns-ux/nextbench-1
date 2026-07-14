@@ -42,13 +42,15 @@ export default function Avatar({ src, name = 'User', size = 'md', className = ''
       className={`rounded-full overflow-hidden flex items-center justify-center bg-brand-teal/5 text-brand-teal font-bold uppercase select-none border border-luxury-ink/5 shrink-0 relative ${sizeClass} ${className}`}
     >
       {imageUrl ? (
-        <SmartImage
-          src={imageUrl}
-          alt={name}
-          ratio={1}
-          fit="cover"
-          className="w-full h-full object-cover"
-        />
+        <div className="absolute inset-0 w-full h-full">
+          <SmartImage
+            src={imageUrl}
+            alt={name}
+            ratio={1}
+            fit="cover"
+            className="w-full h-full object-cover"
+          />
+        </div>
       ) : (
         <span className="leading-none">{initials}</span>
       )}
