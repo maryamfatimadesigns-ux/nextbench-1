@@ -2812,8 +2812,8 @@ export const getSuggestedUsers = onCall({ invoker: "public", cors: CORS_ORIGINS 
     followingList.length > 0
       ? db.collection("follows")
           .where("followingId", "in", candidateIds)
-          .where("followerId", "in", followingList)
           .get()
+          .then(snap => ({ docs: snap.docs.filter(d => followingList.includes(d.get("followerId"))) }))
       : Promise.resolve({ docs: [] }),
     db.collection("user_affinity").where(admin.firestore.FieldPath.documentId(), "in", candidateIds).get(),
     db.collection("user_affinity").doc(uid).get(),
