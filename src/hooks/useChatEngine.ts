@@ -173,9 +173,14 @@ export function useChatEngine({
       q,
       (snapshot) => {
         snapshot.docChanges().forEach((change) => {
-          if (change.type === 'removed') {
-            messagesMapRef.current.delete(change.doc.id);
-          } else {
+          // Deletes in this app are soft (deleteForMe/deleteForEveryone use
+          // updateDoc — no hard deleteDoc anywhere), so a 'removed' change never
+          // means a real deletion. It only fires when an older message ages out
+          // of the newest-LIVE_MESSAGE_LIMIT window as new messages arrive.
+          // Evicting it here would punch a hole in the middle of a thread the
+          // user has already paged older history into, so we keep the message
+          // in the Map and let soft-delete state ride in via 'modified'.
+          if (change.type !== 'removed') {
             messagesMapRef.current.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Message);
           }
         });
