@@ -9,6 +9,8 @@ import {
   updateDoc,
   doc,
   getDoc,
+  getDocs,
+  startAfter,
   serverTimestamp,
   arrayUnion,
   writeBatch,
@@ -16,6 +18,21 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+
+const LIVE_MESSAGE_LIMIT = 50;
+const OLDER_PAGE_SIZE = 50;
+
+function messageMillis(m: { createdAt: any }): number {
+  if (m.createdAt?.toMillis) return m.createdAt.toMillis();
+  if (m.createdAt instanceof Date) return m.createdAt.getTime();
+  if (typeof m.createdAt === 'string') return new Date(m.createdAt).getTime();
+  if (typeof m.createdAt === 'number') return m.createdAt;
+  return 0;
+}
+
+function sortedFromMap<T extends { createdAt: any }>(map: Map<string, T>): T[] {
+  return Array.from(map.values()).sort((a, b) => messageMillis(a) - messageMillis(b));
+}
 
 export interface Message {
   id: string;
@@ -60,12 +77,13 @@ export function useChatEngine({
 }: ChatEngineOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
-  const [limitCount, setLimitCount] = useState(50);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
 
-  const limitRef = useRef(50);
-  limitRef.current = limitCount;
+  const messagesMapRef = useRef<Map<string, Message>>(new Map());
+  const oldestDocRef = useRef<any>(null);
+  const hasMoreRef = useRef(true);
+  const loadingOlderRef = useRef(false);
 
   // Helper to generate the metadata update object for a room/club
   const getRoomMetadataUpdate = useCallback(
@@ -133,25 +151,46 @@ export function useChatEngine({
     }
   }, [user?.uid, roomId, collectionPath]);
 
-  // Subscribe to messages (dynamic limit snapshots keep old reactions/deletions live)
+  // Subscribe to the newest LIVE_MESSAGE_LIMIT messages via docChanges(). Only
+  // added/modified docs get a new object reference in the Map; unaffected
+  // messages keep their exact reference across renders, which is what lets
+  // React.memo-wrapped bubbles skip re-rendering when an unrelated message
+  // arrives elsewhere in the thread. The live listener is never torn down or
+  // re-subscribed by "load older" — see loadOlder below.
   useEffect(() => {
     if (!user || !roomId) return;
 
     setLoading(true);
+    messagesMapRef.current = new Map();
+    oldestDocRef.current = null;
+    hasMoreRef.current = true;
+    setHasMore(true);
+
     const messagesCollection = collection(db, collectionPath, roomId, 'messages');
-    const q = query(messagesCollection, orderBy('createdAt', 'desc'), limit(limitCount));
+    const q = query(messagesCollection, orderBy('createdAt', 'desc'), limit(LIVE_MESSAGE_LIMIT));
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const msgs: Message[] = [];
-        snapshot.forEach((docSnap) => {
-          msgs.push({ id: docSnap.id, ...docSnap.data() } as Message);
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'removed') {
+            messagesMapRef.current.delete(change.doc.id);
+          } else {
+            messagesMapRef.current.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Message);
+          }
         });
 
-        // Snapshots are descending; reverse to chronological for message list
-        setMessages(msgs.reverse());
-        setHasMore(snapshot.docs.length >= limitRef.current);
+        // The cursor for "load older" is the oldest doc in the initial live
+        // window. Set it once — later snapshots are live updates to the same
+        // window, not a new page, so they must not move the cursor.
+        if (!oldestDocRef.current && snapshot.docs.length > 0) {
+          oldestDocRef.current = snapshot.docs[snapshot.docs.length - 1];
+          const moreExist = snapshot.docs.length >= LIVE_MESSAGE_LIMIT;
+          hasMoreRef.current = moreExist;
+          setHasMore(moreExist);
+        }
+
+        setMessages(sortedFromMap(messagesMapRef.current));
         setLoading(false);
       },
       (err) => {
@@ -161,14 +200,44 @@ export function useChatEngine({
     );
 
     return () => unsubscribe();
-  }, [roomId, collectionPath, limitCount, user?.uid]);
+  }, [roomId, collectionPath, user?.uid]);
 
-  // Trigger loading older messages
-  const loadOlder = useCallback(() => {
-    if (!loading && hasMore) {
-      setLimitCount((prev) => prev + 50);
+  // Load one older page of messages. One-time getDocs, not the live listener —
+  // pages loaded this way are not live-updated afterward (matches
+  // WhatsApp/Telegram behavior, see design spec Phase 1).
+  const loadOlder = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreRef.current || !oldestDocRef.current) return;
+    loadingOlderRef.current = true;
+    try {
+      const messagesCollection = collection(db, collectionPath, roomId, 'messages');
+      const q = query(
+        messagesCollection,
+        orderBy('createdAt', 'desc'),
+        startAfter(oldestDocRef.current),
+        limit(OLDER_PAGE_SIZE)
+      );
+      const snap = await getDocs(q);
+
+      snap.docs.forEach((docSnap) => {
+        if (!messagesMapRef.current.has(docSnap.id)) {
+          messagesMapRef.current.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Message);
+        }
+      });
+
+      if (snap.docs.length > 0) {
+        oldestDocRef.current = snap.docs[snap.docs.length - 1];
+      }
+
+      const moreExist = snap.docs.length >= OLDER_PAGE_SIZE;
+      hasMoreRef.current = moreExist;
+      setHasMore(moreExist);
+      setMessages(sortedFromMap(messagesMapRef.current));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, `${collectionPath}/${roomId}/messages`);
+    } finally {
+      loadingOlderRef.current = false;
     }
-  }, [loading, hasMore]);
+  }, [collectionPath, roomId]);
 
   // Optimistic message send
   const sendMessage = useCallback(
