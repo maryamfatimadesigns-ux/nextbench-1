@@ -107,6 +107,8 @@ export default function ChatView({
   const { showToast } = useToast();
   const { showLightbox } = useLightbox();
 
+  const isClub = collectionPath === 'clubs';
+
   const [newMessage, setNewMessage] = useState('');
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
