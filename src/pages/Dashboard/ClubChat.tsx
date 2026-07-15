@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from '../../lib/firestore-errors'
 import ChatView from '../../components/chat/ChatView';
 import { ChatSkeleton } from '../../components/ui/skeleton/Skeleton';
 import { Settings, X, Users } from 'lucide-react';
+import type { ClubData as BaseClubData } from '../../lib/clubs';
 
 interface ClubChatProps {
   panelMode?: boolean;
@@ -15,23 +16,9 @@ interface ClubChatProps {
   onBack?: () => void;
 }
 
-export interface ClubData {
-  id: string;
-  name: string;
-  description?: string;
-  avatar?: string | null;
-  type: 'public' | 'private';
-  school: string;
-  leadId: string;
-  coLeadIds?: string[];
-  memberIds?: string[];
-  memberCount?: number;
-  settings?: {
-    onlyLeadsCanPost?: boolean;
-  };
+export interface ClubData extends BaseClubData {
   pinnedMessageId?: string;
   pinnedMessageText?: string;
-  unreadBy?: string[];
 }
 
 export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChatProps = {}) {

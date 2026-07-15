@@ -412,8 +412,8 @@ export default function MessagesLayout() {
                       </div>
                       <div className="flex items-center gap-2">
                         <p className={`text-xs truncate flex-1 ${isUnread ? 'text-luxury-ink font-semibold' : 'text-luxury-ink/50'}`}>
-                          {club.lastSenderName
-                            ? <>{club.lastSenderId === user?.uid ? 'You' : club.lastSenderName}: {club.lastMessage || ''}</>
+                          {club.lastMessage
+                            ? <>{club.lastSenderId === user?.uid ? 'You' : (club.lastSenderName || 'Someone')}: {club.lastMessage}</>
                             : <span className="italic text-luxury-ink/25">No messages yet</span>
                           }
                         </p>
