@@ -325,11 +325,21 @@ service cloud.firestore {
         && (!data.keys().hasAny(['type']) || data.type in ['dm', 'product']);
     }
 
+    function isValidMessageImage(img) {
+      return img is string
+        ? img.size() <= 2000
+        : (img is map
+            && img.keys().hasAll(['url'])
+            && img.url is string && img.url.size() <= 2000
+            && (!img.keys().hasAny(['w']) || img.w is number)
+            && (!img.keys().hasAny(['h']) || img.h is number));
+    }
+
     function isValidMessage(data) {
       return data.keys().hasAll(['senderId', 'createdAt'])
         && (data.keys().hasAny(['text', 'image', 'sharedPost', 'postId', 'audioUrl']))
         && (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 2000))
-        && (!data.keys().hasAny(['image']) || (data.image is string && data.image.size() <= 2000))
+        && (!data.keys().hasAny(['image']) || isValidMessageImage(data.image))
         && (!data.keys().hasAny(['sharedPost']) || (data.sharedPost is map))
         && (!data.keys().hasAny(['postId']) || (data.postId is string))
         && (!data.keys().hasAny(['audioUrl']) || (data.audioUrl is string && data.audioUrl.size() <= 2000));
@@ -387,6 +397,18 @@ service cloud.firestore {
           && canAccessRoom(get(/databases/$(database)/documents/chatRooms/$(roomId)).data)
           && get(/databases/$(database)/documents/chatRooms/$(roomId)).data.get('status', '') == 'pending';
       }
+    }
+
+    function clubDoc(clubId) {
+      return /databases/$(database)/documents/clubs/$(clubId);
+    }
+    function isClubLeadOrCo(clubId) {
+      return request.auth.uid == get(clubDoc(clubId)).data.leadId
+        || request.auth.uid in get(clubDoc(clubId)).data.get('coLeadIds', []);
+    }
+    function clubAllowsPost(clubId) {
+      return !get(clubDoc(clubId)).data.get('settings', {}).get('onlyLeadsCanPost', false)
+        || isClubLeadOrCo(clubId);
     }
 
     // === CLUBS (Group Chats) ===
@@ -447,7 +469,9 @@ service cloud.firestore {
         allow create: if isVerified()
           && request.auth.uid == incoming().senderId
           && request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds
-          && incoming().createdAt == request.time;
+          && incoming().createdAt == request.time
+          && clubAllowsPost(clubId)
+          && isValidMessage(incoming());
 
         // Previously any member could overwrite ANY field of another member's
         // message. Now: anyone may toggle deleted-for-self or a reaction, but
