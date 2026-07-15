@@ -88,6 +88,16 @@ export function useChatEngine({
   const oldestDocRef = useRef<any>(null);
   const hasMoreRef = useRef(true);
   const loadingOlderRef = useRef(false);
+  // The live-window cursor is latched from the freshest snapshot. It keeps
+  // updating while snapshots are cache-only (a returning user's first snapshot
+  // is fromCache and may under-report the window) and freezes once the first
+  // server snapshot lands, so later live updates to the same window don't move
+  // it. Without this a stale cached count could permanently disable "load older".
+  const cursorSettledRef = useRef(false);
+  // Incremented on every (re)subscription so an in-flight loadOlder from a prior
+  // room can detect that the room changed under it and abort before it writes
+  // another room's messages into the shared map / cursor.
+  const subscriptionEpochRef = useRef(0);
 
   // Helper to generate the metadata update object for a room/club. For clubs,
   // the caller passes its already-live member list (see ClubChat.tsx) instead
@@ -152,6 +162,9 @@ export function useChatEngine({
     messagesMapRef.current = new Map();
     oldestDocRef.current = null;
     hasMoreRef.current = true;
+    cursorSettledRef.current = false;
+    loadingOlderRef.current = false;
+    subscriptionEpochRef.current += 1;
     setHasMore(true);
 
     const messagesCollection = collection(db, collectionPath, roomId, 'messages');
@@ -174,13 +187,18 @@ export function useChatEngine({
         });
 
         // The cursor for "load older" is the oldest doc in the initial live
-        // window. Set it once — later snapshots are live updates to the same
-        // window, not a new page, so they must not move the cursor.
-        if (!oldestDocRef.current && snapshot.docs.length > 0) {
+        // window. Keep refreshing it from cache-only snapshots (a returning
+        // user's first snapshot is fromCache and may under-report the window),
+        // then freeze it on the first server snapshot so later live updates to
+        // the same window don't move the cursor.
+        if (!cursorSettledRef.current && snapshot.docs.length > 0) {
           oldestDocRef.current = snapshot.docs[snapshot.docs.length - 1];
           const moreExist = snapshot.docs.length >= LIVE_MESSAGE_LIMIT;
           hasMoreRef.current = moreExist;
           setHasMore(moreExist);
+          if (!snapshot.metadata.fromCache) {
+            cursorSettledRef.current = true;
+          }
         }
 
         setMessages(sortedFromMap(messagesMapRef.current));
@@ -201,6 +219,11 @@ export function useChatEngine({
   const loadOlder = useCallback(async () => {
     if (loadingOlderRef.current || !hasMoreRef.current || !oldestDocRef.current) return;
     loadingOlderRef.current = true;
+    // Snapshot the current subscription epoch. If the room changes (the effect
+    // re-runs and resets the map/cursor) while getDocs is in flight, this page
+    // belongs to the old room — discard it rather than merge it into the new
+    // room's map and corrupt its cursor.
+    const epoch = subscriptionEpochRef.current;
     try {
       const messagesCollection = collection(db, collectionPath, roomId, 'messages');
       const q = query(
@@ -210,6 +233,8 @@ export function useChatEngine({
         limit(OLDER_PAGE_SIZE)
       );
       const snap = await getDocs(q);
+
+      if (epoch !== subscriptionEpochRef.current) return;
 
       snap.docs.forEach((docSnap) => {
         if (!messagesMapRef.current.has(docSnap.id)) {
