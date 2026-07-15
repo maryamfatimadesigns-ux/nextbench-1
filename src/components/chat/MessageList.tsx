@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { MessageBubble } from './MessageBubble';
 import { Message } from '../../hooks/useChatEngine';
 
@@ -64,14 +65,25 @@ export function MessageList({
   setDeleteEveryoneConfirmMsgId,
 }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const prevScrollHeightRef = useRef(0);
-  const prevScrollTopRef = useRef(0);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
   // Throttle markAsRead to prevent write→read→render feedback loops in club chats
   const lastMarkAsReadRef = useRef<number>(0);
   // Track the last-seen message ID to distinguish new messages from loaded-older ones
   const lastMsgIdRef = useRef<string | undefined>(undefined);
+
+  // Virtualize rows with dynamic measurement: estimateSize seeds the layout,
+  // measureElement corrects each row to its real height after paint (images,
+  // multi-line text, voice bubbles). Stable getItemKey keeps the scroll anchor
+  // pinned to the same message when older rows are prepended by load-older.
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80,
+    overscan: 8,
+    measureElement: (el) => el.getBoundingClientRect().height,
+    getItemKey: (index) => messages[index].id,
+  });
 
   // Mark chat as read — throttled to at most once per 2 s to prevent write→read→render loops
   useEffect(() => {
@@ -92,24 +104,13 @@ export function MessageList({
       setNewMessageCount(0);
     }
 
-    // Trigger loadOlder
+    // Trigger loadOlder. No manual scroll-height compensation needed: the
+    // virtualizer's stable item keys + dynamic measurement keep the anchored
+    // message in place when older rows are prepended above it.
     if (target.scrollTop <= 80 && hasMore && !loading) {
-      prevScrollHeightRef.current = target.scrollHeight;
-      prevScrollTopRef.current = target.scrollTop;
       loadOlder();
     }
   };
-
-  // Adjust scroll when history loads
-  useEffect(() => {
-    if (parentRef.current && prevScrollHeightRef.current > 0) {
-      const scrollDiff = parentRef.current.scrollHeight - prevScrollHeightRef.current;
-      if (scrollDiff > 0) {
-        parentRef.current.scrollTop = prevScrollTopRef.current + scrollDiff;
-      }
-      prevScrollHeightRef.current = 0;
-    }
-  }, [messages.length]);
 
   // Scroll to bottom on genuinely new messages only (not when loading older history)
   const lastMessagesLengthRef = useRef(messages.length);
@@ -127,9 +128,7 @@ export function MessageList({
       const isMine = latestMsg?.senderId === user?.uid;
       if (isNearBottom || isMine) {
         setTimeout(() => {
-          if (parentRef.current) {
-            parentRef.current.scrollTop = parentRef.current.scrollHeight;
-          }
+          rowVirtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
         }, 50);
         setNewMessageCount(0);
       } else {
@@ -175,34 +174,46 @@ export function MessageList({
           </div>
         )}
 
-        {/* Message List Container */}
-        <div className="space-y-3.5">
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              msg={msg}
-              user={user}
-              isSelectMode={isSelectMode}
-              isSelected={selectedMessages.has(msg.id)}
-              toggleMessageSelection={toggleMessageSelection}
-              activeReactionMsgId={activeReactionMsgId}
-              setActiveReactionMsgId={setActiveReactionMsgId}
-              selectedMessageId={selectedMessageId}
-              setSelectedMessageId={setSelectedMessageId}
-              setMenuPosition={setMenuPosition}
-              replyingTo={replyingTo}
-              setReplyingTo={setReplyingTo}
-              setDeleteConfirmMsgId={setDeleteConfirmMsgId}
-              setDeleteEveryoneConfirmMsgId={setDeleteEveryoneConfirmMsgId}
-              onPin={onPin}
-              collectionPath={collectionPath}
-              roomId={roomId}
-              showLightbox={showLightbox}
-              resendMessage={resendMessage}
-              removeFailedMessage={removeFailedMessage}
-              isAdmin={isAdmin}
-            />
-          ))}
+        {/* Virtualized Message Rows. Each row is absolutely positioned and
+            re-measured after paint; paddingBottom stands in for the old
+            container's space-y-3.5 (0.875rem = 14px) so measured heights
+            include the inter-bubble gap. */}
+        <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const msg = messages[virtualRow.index];
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={rowVirtualizer.measureElement}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)`, paddingBottom: 14 }}
+              >
+                <MessageBubble
+                  msg={msg}
+                  user={user}
+                  isSelectMode={isSelectMode}
+                  isSelected={selectedMessages.has(msg.id)}
+                  toggleMessageSelection={toggleMessageSelection}
+                  activeReactionMsgId={activeReactionMsgId}
+                  setActiveReactionMsgId={setActiveReactionMsgId}
+                  selectedMessageId={selectedMessageId}
+                  setSelectedMessageId={setSelectedMessageId}
+                  setMenuPosition={setMenuPosition}
+                  replyingTo={replyingTo}
+                  setReplyingTo={setReplyingTo}
+                  setDeleteConfirmMsgId={setDeleteConfirmMsgId}
+                  setDeleteEveryoneConfirmMsgId={setDeleteEveryoneConfirmMsgId}
+                  onPin={onPin}
+                  collectionPath={collectionPath}
+                  roomId={roomId}
+                  showLightbox={showLightbox}
+                  resendMessage={resendMessage}
+                  removeFailedMessage={removeFailedMessage}
+                  isAdmin={isAdmin}
+                />
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -210,9 +221,7 @@ export function MessageList({
       {newMessageCount > 0 && (
         <button
           onClick={() => {
-            if (parentRef.current) {
-              parentRef.current.scrollTop = parentRef.current.scrollHeight;
-            }
+            rowVirtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
             setNewMessageCount(0);
           }}
           className="absolute bottom-24 right-6 z-30 flex items-center gap-2 bg-luxury-ink text-surface-base px-4 py-2.5 rounded-full shadow-2xl hover:bg-brand-teal transition-all text-xs font-bold uppercase tracking-wider animate-bounce"
