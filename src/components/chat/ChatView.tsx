@@ -6,7 +6,6 @@ import {
   Camera,
   Zap,
   Mic,
-  Trash2,
   Download,
   Flag,
   SmilePlus,
@@ -48,6 +47,7 @@ import { getOptimizedImageUrl } from '../../lib/utils';
 import { useChatEngine, Message } from '../../hooks/useChatEngine';
 import { MessageBubble } from './MessageBubble';
 import { MessageContextMenu } from './MessageContextMenu';
+import { SelectionToolbar } from './SelectionToolbar';
 
 const QUICK_MESSAGES = [
   'Is this still available?',
@@ -456,14 +456,11 @@ export default function ChatView({
         {/* Header Actions */}
         <div className="flex items-center gap-2">
           {isSelectMode ? (
-            <div className="flex items-center gap-2">
-              <button onClick={handleBulkDelete} disabled={selectedMessages.size === 0} className="p-2 text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 rounded-full" title="Delete selected">
-                <Trash2 size={18} />
-              </button>
-              <button onClick={() => { setIsSelectMode(false); setSelectedMessages(new Set()); }} className="text-xs font-bold text-luxury-ink/50 hover:text-luxury-ink px-3 py-1.5 rounded-full hover:bg-surface-soft transition-all">
-                Cancel
-              </button>
-            </div>
+            <SelectionToolbar
+              count={selectedMessages.size}
+              onDelete={handleBulkDelete}
+              onCancel={() => { setIsSelectMode(false); setSelectedMessages(new Set()); }}
+            />
           ) : (
             <>
               {setShowOptions && (
