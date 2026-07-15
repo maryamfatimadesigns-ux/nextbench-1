@@ -1,8 +1,25 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MessageBubble } from './MessageBubble';
 import { Message } from '../../hooks/useChatEngine';
+
+type RenderItem =
+  | { kind: 'day'; key: string; label: string }
+  | { kind: 'message'; key: string; msg: Message };
+
+const toMillis = (v: any): number =>
+  v?.toDate ? v.toDate().getTime() : v instanceof Date ? v.getTime() : typeof v === 'number' ? v : Date.now();
+
+const dayLabel = (ms: number): string => {
+  const d = new Date(ms);
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, today)) return 'Today';
+  if (sameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString([], { month: 'long', day: 'numeric', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+};
 
 interface MessageListProps {
   messages: Message[];
@@ -72,17 +89,35 @@ export function MessageList({
   // Track the last-seen message ID to distinguish new messages from loaded-older ones
   const lastMsgIdRef = useRef<string | undefined>(undefined);
 
+  // Flatten messages into virtualizer rows, inserting a day divider at each
+  // local-date boundary. Messages arrive ascending by createdAt.
+  const renderItems = useMemo<RenderItem[]>(() => {
+    const items: RenderItem[] = [];
+    let lastDayKey = '';
+    for (const msg of messages) {
+      const ms = toMillis(msg.createdAt);
+      const d = new Date(ms);
+      const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (dayKey !== lastDayKey) {
+        items.push({ kind: 'day', key: `day-${dayKey}`, label: dayLabel(ms) });
+        lastDayKey = dayKey;
+      }
+      items.push({ kind: 'message', key: msg.id, msg });
+    }
+    return items;
+  }, [messages]);
+
   // Virtualize rows with dynamic measurement: estimateSize seeds the layout,
   // measureElement corrects each row to its real height after paint (images,
   // multi-line text, voice bubbles). Stable getItemKey keeps the scroll anchor
   // pinned to the same message when older rows are prepended by load-older.
   const rowVirtualizer = useVirtualizer({
-    count: messages.length,
+    count: renderItems.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 80,
     overscan: 8,
     measureElement: (el) => el.getBoundingClientRect().height,
-    getItemKey: (index) => messages[index].id,
+    getItemKey: (index) => renderItems[index].key,
   });
 
   // Mark chat as read — throttled to at most once per 2 s to prevent write→read→render loops
@@ -128,7 +163,7 @@ export function MessageList({
       const isMine = latestMsg?.senderId === user?.uid;
       if (isNearBottom || isMine) {
         setTimeout(() => {
-          rowVirtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+          rowVirtualizer.scrollToIndex(renderItems.length - 1, { align: 'end' });
         }, 50);
         setNewMessageCount(0);
       } else {
@@ -180,7 +215,7 @@ export function MessageList({
             include the inter-bubble gap. */}
         <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const msg = messages[virtualRow.index];
+            const item = renderItems[virtualRow.index];
             return (
               <div
                 key={virtualRow.key}
@@ -188,29 +223,35 @@ export function MessageList({
                 ref={rowVirtualizer.measureElement}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)`, paddingBottom: 14 }}
               >
-                <MessageBubble
-                  msg={msg}
-                  user={user}
-                  isSelectMode={isSelectMode}
-                  isSelected={selectedMessages.has(msg.id)}
-                  toggleMessageSelection={toggleMessageSelection}
-                  activeReactionMsgId={activeReactionMsgId}
-                  setActiveReactionMsgId={setActiveReactionMsgId}
-                  selectedMessageId={selectedMessageId}
-                  setSelectedMessageId={setSelectedMessageId}
-                  setMenuPosition={setMenuPosition}
-                  replyingTo={replyingTo}
-                  setReplyingTo={setReplyingTo}
-                  setDeleteConfirmMsgId={setDeleteConfirmMsgId}
-                  setDeleteEveryoneConfirmMsgId={setDeleteEveryoneConfirmMsgId}
-                  onPin={onPin}
-                  collectionPath={collectionPath}
-                  roomId={roomId}
-                  showLightbox={showLightbox}
-                  resendMessage={resendMessage}
-                  removeFailedMessage={removeFailedMessage}
-                  isAdmin={isAdmin}
-                />
+                {item.kind === 'day' ? (
+                  <div className="flex justify-center py-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-luxury-ink/30 bg-surface-soft px-3 py-1 rounded-full">{item.label}</span>
+                  </div>
+                ) : (
+                  <MessageBubble
+                    msg={item.msg}
+                    user={user}
+                    isSelectMode={isSelectMode}
+                    isSelected={selectedMessages.has(item.msg.id)}
+                    toggleMessageSelection={toggleMessageSelection}
+                    activeReactionMsgId={activeReactionMsgId}
+                    setActiveReactionMsgId={setActiveReactionMsgId}
+                    selectedMessageId={selectedMessageId}
+                    setSelectedMessageId={setSelectedMessageId}
+                    setMenuPosition={setMenuPosition}
+                    replyingTo={replyingTo}
+                    setReplyingTo={setReplyingTo}
+                    setDeleteConfirmMsgId={setDeleteConfirmMsgId}
+                    setDeleteEveryoneConfirmMsgId={setDeleteEveryoneConfirmMsgId}
+                    onPin={onPin}
+                    collectionPath={collectionPath}
+                    roomId={roomId}
+                    showLightbox={showLightbox}
+                    resendMessage={resendMessage}
+                    removeFailedMessage={removeFailedMessage}
+                    isAdmin={isAdmin}
+                  />
+                )}
               </div>
             );
           })}
@@ -221,7 +262,7 @@ export function MessageList({
       {newMessageCount > 0 && (
         <button
           onClick={() => {
-            rowVirtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+            rowVirtualizer.scrollToIndex(renderItems.length - 1, { align: 'end' });
             setNewMessageCount(0);
           }}
           className="absolute bottom-24 right-6 z-30 flex items-center gap-2 bg-luxury-ink text-surface-base px-4 py-2.5 rounded-full shadow-2xl hover:bg-brand-teal transition-all text-xs font-bold uppercase tracking-wider animate-bounce"
