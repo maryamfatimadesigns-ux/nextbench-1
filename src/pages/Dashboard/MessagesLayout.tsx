@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, User, ShieldCheck, Search, Lock, Plus, X, Send, Users, Globe, Crown, ArrowLeft, Archive, BellOff } from 'lucide-react';
+import { MessageSquare, User, ShieldCheck, Search, Lock, Plus, X, Send, Users, Globe, Crown, ArrowLeft, Archive, BellOff, ArchiveRestore, Pin, MailOpen, Trash2, CheckCircle2, Circle } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
 import {
@@ -17,10 +17,19 @@ import { getOrCreateDMRoom } from '../../lib/dm';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import { useAllBlockedUserIds } from '../../lib/blocks';
 import { useUserClubs, createClub } from '../../lib/clubs';
-import { markConversationRead } from '../../lib/conversations';
+import {
+  markConversationRead, markConversationUnread,
+  muteConversation, unmuteConversation,
+  archiveConversation, unarchiveConversation,
+  pinConversation, unpinConversation,
+  deleteConversationForUser, bulkConversationOp,
+  type ConvCollection,
+} from '../../lib/conversations';
 import { useToast } from '../../lib/ToastContext';
 import ChatRoom from './ChatRoom';
 import ClubChat from './ClubChat';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { SelectionToolbar, type SelectionAction } from '../../components/chat/SelectionToolbar';
 import { searchPublicUsers } from '../../lib/discovery';
 
 interface ChatRoomItem {
@@ -62,6 +71,13 @@ export default function MessagesLayout() {
   const [loading, setLoading] = useState(true);
   const [chatSearchTerm, setChatSearchTerm] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+
+  // Inbox multi-select
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedRooms, setSelectedRooms] = useState<Map<string, ConvCollection>>(new Map());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
 
   // New DM modal
   const [showNewDM, setShowNewDM] = useState(false);
@@ -276,6 +292,116 @@ export default function MessagesLayout() {
     navigate('/messages');
   };
 
+  // ── Multi-select ──────────────────────────────────────
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedRooms(new Map());
+  };
+
+  const toggleRoomSelection = (id: string, collectionPath: ConvCollection) => {
+    setSelectedRooms((prev) => {
+      const next = new Map(prev);
+      if (next.has(id)) next.delete(id);
+      else next.set(id, collectionPath);
+      return next;
+    });
+  };
+
+  const enterSelectWith = (id: string, collectionPath: ConvCollection) => {
+    setSelectMode(true);
+    setSelectedRooms(new Map([[id, collectionPath]]));
+  };
+
+  // Long-press to enter select mode on touch/mobile.
+  const handleRowPointerDown = (id: string, collectionPath: ConvCollection) => {
+    longPressFired.current = false;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      enterSelectWith(id, collectionPath);
+      longPressTimer.current = null;
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  // A row click either toggles selection (in select mode) or opens the chat.
+  // Suppress the click that immediately follows a long-press (which already
+  // selected the row), so it doesn't toggle it back off.
+  const handleRowActivate = (id: string, collectionPath: ConvCollection, open: () => void) => {
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    if (selectMode) {
+      toggleRoomSelection(id, collectionPath);
+    } else {
+      open();
+    }
+  };
+
+  // Run a bulk op across the current selection, toast partial failures, exit.
+  const runBulk = async (
+    op: (c: ConvCollection, roomId: string, u: string) => Promise<void>,
+    successMsg: string
+  ) => {
+    const items = Array.from(selectedRooms.entries()).map(([roomId, collection]) => ({ collection, roomId }));
+    if (items.length === 0 || !uid) return;
+    const results = await bulkConversationOp(items, op, uid);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) {
+      showToast(`${successMsg} (${items.length - failed}/${items.length}; ${failed} failed)`, failed === items.length ? 'error' : 'info');
+    } else {
+      showToast(successMsg, 'success');
+    }
+    exitSelectMode();
+  };
+
+  // Selection-derived toggles: pick the op that makes the majority consistent.
+  const selectedItems = () => Array.from(selectedRooms.entries()).map(([id, c]) => ({ id, c }));
+  const allSelected = (pred: (id: string, c: ConvCollection) => boolean) =>
+    selectedItems().length > 0 && selectedItems().every(({ id, c }) => pred(id, c));
+
+  const isRoomFlag = (id: string, field: 'pinnedBy' | 'mutedBy' | 'unreadBy') => {
+    const item = combinedList.find((x) => x.id === id) as any;
+    return !!item?.[field]?.includes(uid);
+  };
+
+  const handleBulkPin = () => {
+    const everyPinned = allSelected((id) => isRoomFlag(id, 'pinnedBy'));
+    runBulk(everyPinned ? unpinConversation : pinConversation, everyPinned ? 'Unpinned' : 'Pinned');
+  };
+  const handleBulkReadToggle = () => {
+    const everyRead = allSelected((id) => !isRoomFlag(id, 'unreadBy'));
+    runBulk(everyRead ? markConversationUnread : markConversationRead, everyRead ? 'Marked unread' : 'Marked read');
+  };
+  const handleBulkMute = () => {
+    const everyMuted = allSelected((id) => isRoomFlag(id, 'mutedBy'));
+    runBulk(everyMuted ? unmuteConversation : muteConversation, everyMuted ? 'Unmuted' : 'Muted');
+  };
+  const handleBulkArchive = () => {
+    // In the archived view, the action restores; otherwise it archives.
+    runBulk(showArchived ? unarchiveConversation : archiveConversation, showArchived ? 'Unarchived' : 'Archived');
+  };
+  const handleBulkDelete = () => setShowBulkDeleteConfirm(true);
+  const confirmBulkDelete = () => {
+    setShowBulkDeleteConfirm(false);
+    runBulk(deleteConversationForUser, 'Deleted');
+  };
+
+  const bulkActions: SelectionAction[] = [
+    { key: 'pin', icon: <Pin size={18} />, label: 'Pin', onClick: handleBulkPin },
+    { key: 'read', icon: <MailOpen size={18} />, label: 'Mark read/unread', onClick: handleBulkReadToggle },
+    { key: 'mute', icon: <BellOff size={18} />, label: 'Mute/unmute', onClick: handleBulkMute },
+    { key: 'archive', icon: showArchived ? <ArchiveRestore size={18} /> : <Archive size={18} />, label: showArchived ? 'Unarchive' : 'Archive', onClick: handleBulkArchive },
+    { key: 'delete', icon: <Trash2 size={18} />, label: 'Delete', onClick: handleBulkDelete, danger: true },
+  ];
+
+
   if (userData && !userData.verified) {
     return (
       <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto text-center">
@@ -351,6 +477,11 @@ export default function MessagesLayout() {
             <button onClick={() => setShowCreateClub(true)} className="p-2 text-brand-teal bg-brand-teal/10 rounded-full hover:bg-brand-teal/20 transition-colors" title="New Club">
               <Users size={16} />
             </button>
+          </div>
+        ) : selectMode ? (
+          <div className="flex items-center justify-between mb-4 min-h-[36px]">
+            <span className="text-sm font-bold text-luxury-ink">{selectedRooms.size} selected</span>
+            <SelectionToolbar count={selectedRooms.size} actions={bulkActions} onCancel={exitSelectMode} />
           </div>
         ) : (
           <>
@@ -434,17 +565,24 @@ export default function MessagesLayout() {
               const club = item as any;
               const isMuted = club.mutedBy?.includes(uid);
               const isUnread = club.unreadBy?.includes(uid) && !isMuted;
+              const isChecked = selectedRooms.has(club.id);
               return (
                 <button
                   key={`club-${club.id}`}
-                  onClick={() => openChat(club.id, null, 'club')}
+                  onClick={() => handleRowActivate(club.id, 'clubs', () => openChat(club.id, null, 'club'))}
+                  onPointerDown={() => handleRowPointerDown(club.id, 'clubs')}
+                  onPointerUp={cancelLongPress}
+                  onPointerLeave={cancelLongPress}
                   className={`w-full flex items-center transition-colors cursor-pointer text-left ${
                     sidebarCollapsed ? 'justify-center py-3.5 px-2' : 'gap-3 py-3 px-4'
                   } ${
-                    isActive ? 'bg-brand-teal/8 border-r-2 border-brand-teal' : isUnread ? 'bg-brand-teal/10 hover:bg-brand-teal/15' : 'hover:bg-surface-soft'
+                    isChecked ? 'bg-brand-pink/8' : isActive ? 'bg-brand-teal/8 border-r-2 border-brand-teal' : isUnread ? 'bg-brand-teal/10 hover:bg-brand-teal/15' : 'hover:bg-surface-soft'
                   }`}
                   title={sidebarCollapsed ? club.name : undefined}
                 >
+                  {selectMode && !sidebarCollapsed && (
+                    isChecked ? <CheckCircle2 size={20} className="text-brand-mint shrink-0" /> : <Circle size={20} className="text-luxury-ink/20 shrink-0" />
+                  )}
                   <div className="relative shrink-0">
                     <div className={`rounded-xl bg-linear-to-br from-brand-teal/15 to-brand-pink/15 flex items-center justify-center overflow-hidden border border-luxury-ink/5 ${
                       sidebarCollapsed ? 'w-10 h-10' : 'w-11 h-11'
@@ -494,17 +632,24 @@ export default function MessagesLayout() {
               const isMuted = room.mutedBy?.includes(uid);
               const isUnread = room.unreadBy?.includes(uid) && !isMuted;
               const isDM = room.type === 'dm' || !room.productTitle;
+              const isChecked = selectedRooms.has(room.id);
               return (
                 <button
                   key={`chat-${room.id}`}
-                  onClick={() => openChat(room.id, { otherUser: room.otherUser, roomData: room }, 'chat')}
+                  onClick={() => handleRowActivate(room.id, 'chatRooms', () => openChat(room.id, { otherUser: room.otherUser, roomData: room }, 'chat'))}
+                  onPointerDown={() => handleRowPointerDown(room.id, 'chatRooms')}
+                  onPointerUp={cancelLongPress}
+                  onPointerLeave={cancelLongPress}
                   className={`w-full flex items-center transition-colors cursor-pointer text-left ${
                     sidebarCollapsed ? 'justify-center py-3.5 px-2' : 'gap-3 py-3 px-4'
                   } ${
-                    isActive ? 'bg-brand-teal/8 border-r-2 border-brand-teal' : isUnread ? 'bg-brand-teal/10 hover:bg-brand-teal/15' : 'hover:bg-surface-soft'
+                    isChecked ? 'bg-brand-pink/8' : isActive ? 'bg-brand-teal/8 border-r-2 border-brand-teal' : isUnread ? 'bg-brand-teal/10 hover:bg-brand-teal/15' : 'hover:bg-surface-soft'
                   }`}
                   title={sidebarCollapsed ? (room.otherUser?.name || 'Unknown User') : undefined}
                 >
+                  {selectMode && !sidebarCollapsed && (
+                    isChecked ? <CheckCircle2 size={20} className="text-brand-mint shrink-0" /> : <Circle size={20} className="text-luxury-ink/20 shrink-0" />
+                  )}
                   <div className="relative shrink-0">
                     <div className={`rounded-full bg-brand-teal/5 flex items-center justify-center overflow-hidden ${
                       sidebarCollapsed ? 'w-10 h-10' : 'w-11 h-11'
@@ -737,6 +882,16 @@ export default function MessagesLayout() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Bulk Delete Confirm ── */}
+      <ConfirmDialog
+        isOpen={showBulkDeleteConfirm}
+        title="Delete conversations"
+        message={`Remove ${selectedRooms.size} conversation${selectedRooms.size === 1 ? '' : 's'} from your inbox? Messages are not deleted, and a conversation reappears if it receives new activity.`}
+        confirmLabel="Delete"
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setShowBulkDeleteConfirm(false)}
+      />
     </>
   );
 }
