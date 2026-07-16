@@ -325,11 +325,21 @@ service cloud.firestore {
         && (!data.keys().hasAny(['type']) || data.type in ['dm', 'product']);
     }
 
+    function isValidMessageImage(img) {
+      return img is string
+        ? img.size() <= 2000
+        : (img is map
+            && img.keys().hasAll(['url'])
+            && img.url is string && img.url.size() <= 2000
+            && (!img.keys().hasAny(['w']) || img.w is number)
+            && (!img.keys().hasAny(['h']) || img.h is number));
+    }
+
     function isValidMessage(data) {
       return data.keys().hasAll(['senderId', 'createdAt'])
         && (data.keys().hasAny(['text', 'image', 'sharedPost', 'postId', 'audioUrl']))
         && (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 2000))
-        && (!data.keys().hasAny(['image']) || (data.image is string && data.image.size() <= 2000))
+        && (!data.keys().hasAny(['image']) || isValidMessageImage(data.image))
         && (!data.keys().hasAny(['sharedPost']) || (data.sharedPost is map))
         && (!data.keys().hasAny(['postId']) || (data.postId is string))
         && (!data.keys().hasAny(['audioUrl']) || (data.audioUrl is string && data.audioUrl.size() <= 2000));
@@ -350,7 +360,7 @@ service cloud.firestore {
         || (isSignedIn()
           && isValidId(roomId)
           && canAccessRoom(existing())
-          && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy', 'status', 'requestedBy', 'mutedBy', 'pinnedBy', 'deletedBy', 'lastMessageType' ]));
+          && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt', 'pinnedMessageId', 'pinnedMessageText', 'unreadBy', 'status', 'requestedBy', 'mutedBy', 'archivedBy', 'pinnedBy', 'deletedBy', 'lastMessageType' ]));
 
       allow delete: if isVerified() && isValidId(roomId)
         && request.auth.uid in existing().participants
@@ -389,6 +399,18 @@ service cloud.firestore {
       }
     }
 
+    function clubDoc(clubId) {
+      return /databases/$(database)/documents/clubs/$(clubId);
+    }
+    function isClubLeadOrCo(clubId) {
+      return request.auth.uid == get(clubDoc(clubId)).data.leadId
+        || request.auth.uid in get(clubDoc(clubId)).data.get('coLeadIds', []);
+    }
+    function clubAllowsPost(clubId) {
+      return !get(clubDoc(clubId)).data.get('settings', {}).get('onlyLeadsCanPost', false)
+        || isClubLeadOrCo(clubId);
+    }
+
     // === CLUBS (Group Chats) ===
     match /clubs/{clubId} {
       // Anyone signed in can read public clubs; members can read private clubs
@@ -421,6 +443,13 @@ service cloud.firestore {
           (request.auth.uid in existing().memberIds
             && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'lastSenderName', 'pinnedMessageId', 'pinnedMessageText', 'updatedAt', 'unreadBy']))
           ||
+          // Member: toggle own per-user conversation state (mute/archive/pin/
+          // unread/delete). Only these array fields, and updatedAt must NOT
+          // change — bumping it would reorder every member's inbox.
+          (request.auth.uid in existing().memberIds
+            && incoming().diff(existing()).affectedKeys().hasOnly(['mutedBy', 'archivedBy', 'pinnedBy', 'unreadBy', 'deletedBy'])
+            && incoming().updatedAt == existing().updatedAt)
+          ||
           // Member: leave the club — may remove only themselves
           (request.auth.uid in existing().memberIds
             && incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'coLeadIds', 'memberCount', 'updatedAt'])
@@ -447,7 +476,9 @@ service cloud.firestore {
         allow create: if isVerified()
           && request.auth.uid == incoming().senderId
           && request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds
-          && incoming().createdAt == request.time;
+          && incoming().createdAt == request.time
+          && clubAllowsPost(clubId)
+          && isValidMessage(incoming());
 
         // Previously any member could overwrite ANY field of another member's
         // message. Now: anyone may toggle deleted-for-self or a reaction, but
