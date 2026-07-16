@@ -30,8 +30,17 @@ function messageMillis(m: { createdAt: any }): number {
   return 0;
 }
 
-function sortedFromMap<T extends { createdAt: any }>(map: Map<string, T>): T[] {
-  return Array.from(map.values()).sort((a, b) => messageMillis(a) - messageMillis(b));
+function sortedFromMap<T extends { createdAt: any; deletedFor?: string[] }>(
+  map: Map<string, T>,
+  excludeUid?: string,
+): T[] {
+  const values = Array.from(map.values());
+  // Hide messages the current user has deleted-for-me. Kept in the Map (a
+  // 'modified' snapshot can flip deletedFor) but filtered out of the view.
+  const visible = excludeUid
+    ? values.filter((m) => !m.deletedFor?.includes(excludeUid))
+    : values;
+  return visible.sort((a, b) => messageMillis(a) - messageMillis(b));
 }
 
 export interface Message {
@@ -203,7 +212,7 @@ export function useChatEngine({
           }
         }
 
-        setMessages(sortedFromMap(messagesMapRef.current));
+        setMessages(sortedFromMap(messagesMapRef.current, user?.uid));
         setLoading(false);
       },
       (err) => {
@@ -251,7 +260,7 @@ export function useChatEngine({
       const moreExist = snap.docs.length >= OLDER_PAGE_SIZE;
       hasMoreRef.current = moreExist;
       setHasMore(moreExist);
-      setMessages(sortedFromMap(messagesMapRef.current));
+      setMessages(sortedFromMap(messagesMapRef.current, user?.uid));
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, `${collectionPath}/${roomId}/messages`);
     } finally {
