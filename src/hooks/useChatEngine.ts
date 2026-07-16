@@ -408,6 +408,32 @@ export function useChatEngine({
     [user?.uid, roomId, collectionPath]
   );
 
+  // Bulk delete-for-everyone. Only the sender's own messages pass the rules;
+  // the caller gates the UI so every id is an own-message. Chunked at 450/batch
+  // (Firestore's 500-op limit with headroom).
+  const deleteForEveryoneBulk = useCallback(
+    async (ids: string[]) => {
+      if (!user || !roomId || ids.length === 0) return;
+      try {
+        for (let i = 0; i < ids.length; i += 450) {
+          const chunk = ids.slice(i, i + 450);
+          const batch = writeBatch(db);
+          for (const id of chunk) {
+            batch.update(doc(db, collectionPath, roomId, 'messages', id), {
+              isDeletedForEveryone: true,
+              text: '',
+              image: '',
+            });
+          }
+          await batch.commit();
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `${collectionPath}/${roomId}/messages`);
+      }
+    },
+    [user?.uid, roomId, collectionPath]
+  );
+
   // Send voice message
   const sendVoiceMessage = useCallback(
     async (audioUrl: string, duration: number, fileSize: number, mimeType: string) => {
@@ -571,6 +597,7 @@ export function useChatEngine({
     removeFailedMessage,
     deleteForMe,
     deleteForEveryone,
+    deleteForEveryoneBulk,
     sendVoiceMessage,
     sendVideoMessage,
     forwardMessage,
