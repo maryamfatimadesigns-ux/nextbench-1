@@ -53,6 +53,7 @@ firebase-applet-config.json
 agents.md
 .gemini/
 scratch/
+.superpowers/
 android/
 capacitor.config.ts
 .vercel

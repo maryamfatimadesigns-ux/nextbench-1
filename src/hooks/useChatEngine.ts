@@ -9,6 +9,8 @@ import {
   updateDoc,
   doc,
   getDoc,
+  getDocs,
+  startAfter,
   serverTimestamp,
   arrayUnion,
   writeBatch,
@@ -16,6 +18,21 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+
+const LIVE_MESSAGE_LIMIT = 50;
+const OLDER_PAGE_SIZE = 50;
+
+function messageMillis(m: { createdAt: any }): number {
+  if (m.createdAt?.toMillis) return m.createdAt.toMillis();
+  if (m.createdAt instanceof Date) return m.createdAt.getTime();
+  if (typeof m.createdAt === 'string') return new Date(m.createdAt).getTime();
+  if (typeof m.createdAt === 'number') return m.createdAt;
+  return 0;
+}
+
+function sortedFromMap<T extends { createdAt: any }>(map: Map<string, T>): T[] {
+  return Array.from(map.values()).sort((a, b) => messageMillis(a) - messageMillis(b));
+}
 
 export interface Message {
   id: string;
@@ -46,6 +63,8 @@ export interface ChatEngineOptions {
   userData: any;
   recipientId?: string; // DM only
   isBlocked?: boolean; // DM only
+  clubMembers?: string[]; // clubs only — leadId + coLeadIds + memberIds, from the caller's already-live club doc
+  enabled?: boolean; // when false, never opens the message listener (e.g. non-member previewing a club)
   onMessageSent?: (text?: string, image?: any) => void;
 }
 
@@ -56,20 +75,35 @@ export function useChatEngine({
   userData,
   recipientId,
   isBlocked = false,
+  clubMembers,
+  enabled = true,
   onMessageSent,
 }: ChatEngineOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
-  const [limitCount, setLimitCount] = useState(50);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
 
-  const limitRef = useRef(50);
-  limitRef.current = limitCount;
+  const messagesMapRef = useRef<Map<string, Message>>(new Map());
+  const oldestDocRef = useRef<any>(null);
+  const hasMoreRef = useRef(true);
+  const loadingOlderRef = useRef(false);
+  // The live-window cursor is latched from the freshest snapshot. It keeps
+  // updating while snapshots are cache-only (a returning user's first snapshot
+  // is fromCache and may under-report the window) and freezes once the first
+  // server snapshot lands, so later live updates to the same window don't move
+  // it. Without this a stale cached count could permanently disable "load older".
+  const cursorSettledRef = useRef(false);
+  // Incremented on every (re)subscription so an in-flight loadOlder from a prior
+  // room can detect that the room changed under it and abort before it writes
+  // another room's messages into the shared map / cursor.
+  const subscriptionEpochRef = useRef(0);
 
-  // Helper to generate the metadata update object for a room/club
+  // Helper to generate the metadata update object for a room/club. For clubs,
+  // the caller passes its already-live member list (see ClubChat.tsx) instead
+  // of this hook doing its own getDoc(clubs/roomId) on every single send.
   const getRoomMetadataUpdate = useCallback(
-    async (lastMsgText: string) => {
+    (lastMsgText: string) => {
       const updateData: any = {
         lastMessage: lastMsgText,
         lastSenderId: user.uid,
@@ -78,26 +112,9 @@ export function useChatEngine({
 
       if (collectionPath === 'clubs') {
         updateData.lastSenderName = userData?.name || 'Unknown';
-        try {
-          const clubSnap = await getDoc(doc(db, 'clubs', roomId));
-          if (clubSnap.exists()) {
-            const clubData = clubSnap.data();
-            const members = new Set<string>();
-            if (clubData.leadId) members.add(clubData.leadId);
-            if (Array.isArray(clubData.coLeadIds)) {
-              clubData.coLeadIds.forEach((id: string) => members.add(id));
-            }
-            if (Array.isArray(clubData.memberIds)) {
-              clubData.memberIds.forEach((id: string) => members.add(id));
-            }
-            // Remove self
-            members.delete(user.uid);
-            if (members.size > 0) {
-              updateData.unreadBy = arrayUnion(...Array.from(members));
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to get club members for unreadBy:', err);
+        const others = (clubMembers || []).filter((id) => id !== user.uid);
+        if (others.length > 0) {
+          updateData.unreadBy = arrayUnion(...others);
         }
       } else if (recipientId) {
         updateData.unreadBy = arrayUnion(recipientId);
@@ -105,7 +122,7 @@ export function useChatEngine({
 
       return updateData;
     },
-    [user?.uid, userData?.name, collectionPath, roomId, recipientId]
+    [user?.uid, userData?.name, collectionPath, clubMembers, recipientId]
   );
 
   // Mark room as read for user
@@ -123,37 +140,68 @@ export function useChatEngine({
       const updatePayload: any = {
         unreadBy: arrayRemove(user.uid),
       };
-      // Firestore security rules for clubs require updatedAt == request.time on any update
-      if (collectionPath === 'clubs') {
-        updatePayload.updatedAt = serverTimestamp();
-      }
       await updateDoc(roomRef, updatePayload);
     } catch (err) {
       console.error('Failed to mark chat as read:', err);
     }
   }, [user?.uid, roomId, collectionPath]);
 
-  // Subscribe to messages (dynamic limit snapshots keep old reactions/deletions live)
+  // Subscribe to the newest LIVE_MESSAGE_LIMIT messages via docChanges(). Only
+  // added/modified docs get a new object reference in the Map; unaffected
+  // messages keep their exact reference across renders, which is what lets
+  // React.memo-wrapped bubbles skip re-rendering when an unrelated message
+  // arrives elsewhere in the thread. The live listener is never torn down or
+  // re-subscribed by "load older" — see loadOlder below.
   useEffect(() => {
-    if (!user || !roomId) return;
+    if (!user || !roomId || !enabled) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
+    messagesMapRef.current = new Map();
+    oldestDocRef.current = null;
+    hasMoreRef.current = true;
+    cursorSettledRef.current = false;
+    loadingOlderRef.current = false;
+    subscriptionEpochRef.current += 1;
+    setHasMore(true);
+
     const messagesCollection = collection(db, collectionPath, roomId, 'messages');
-    const q = query(messagesCollection, orderBy('createdAt', 'desc'), limit(limitCount));
+    const q = query(messagesCollection, orderBy('createdAt', 'desc'), limit(LIVE_MESSAGE_LIMIT));
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const msgs: Message[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data.deletedFor && data.deletedFor.includes(user?.uid)) return;
-          msgs.push({ id: docSnap.id, ...data } as Message);
+        snapshot.docChanges().forEach((change) => {
+          // Deletes in this app are soft (deleteForMe/deleteForEveryone use
+          // updateDoc — no hard deleteDoc anywhere), so a 'removed' change never
+          // means a real deletion. It only fires when an older message ages out
+          // of the newest-LIVE_MESSAGE_LIMIT window as new messages arrive.
+          // Evicting it here would punch a hole in the middle of a thread the
+          // user has already paged older history into, so we keep the message
+          // in the Map and let soft-delete state ride in via 'modified'.
+          if (change.type !== 'removed') {
+            messagesMapRef.current.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Message);
+          }
         });
 
-        // Snapshots are descending; reverse to chronological for message list
-        setMessages(msgs.reverse());
-        setHasMore(snapshot.docs.length >= limitRef.current);
+        // The cursor for "load older" is the oldest doc in the initial live
+        // window. Keep refreshing it from cache-only snapshots (a returning
+        // user's first snapshot is fromCache and may under-report the window),
+        // then freeze it on the first server snapshot so later live updates to
+        // the same window don't move the cursor.
+        if (!cursorSettledRef.current && snapshot.docs.length > 0) {
+          oldestDocRef.current = snapshot.docs[snapshot.docs.length - 1];
+          const moreExist = snapshot.docs.length >= LIVE_MESSAGE_LIMIT;
+          hasMoreRef.current = moreExist;
+          setHasMore(moreExist);
+          if (!snapshot.metadata.fromCache) {
+            cursorSettledRef.current = true;
+          }
+        }
+
+        setMessages(sortedFromMap(messagesMapRef.current));
         setLoading(false);
       },
       (err) => {
@@ -163,14 +211,51 @@ export function useChatEngine({
     );
 
     return () => unsubscribe();
-  }, [roomId, collectionPath, limitCount, user?.uid]);
+  }, [roomId, collectionPath, user?.uid, enabled]);
 
-  // Trigger loading older messages
-  const loadOlder = useCallback(() => {
-    if (!loading && hasMore) {
-      setLimitCount((prev) => prev + 50);
+  // Load one older page of messages. One-time getDocs, not the live listener —
+  // pages loaded this way are not live-updated afterward (matches
+  // WhatsApp/Telegram behavior, see design spec Phase 1).
+  const loadOlder = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreRef.current || !oldestDocRef.current) return;
+    loadingOlderRef.current = true;
+    // Snapshot the current subscription epoch. If the room changes (the effect
+    // re-runs and resets the map/cursor) while getDocs is in flight, this page
+    // belongs to the old room — discard it rather than merge it into the new
+    // room's map and corrupt its cursor.
+    const epoch = subscriptionEpochRef.current;
+    try {
+      const messagesCollection = collection(db, collectionPath, roomId, 'messages');
+      const q = query(
+        messagesCollection,
+        orderBy('createdAt', 'desc'),
+        startAfter(oldestDocRef.current),
+        limit(OLDER_PAGE_SIZE)
+      );
+      const snap = await getDocs(q);
+
+      if (epoch !== subscriptionEpochRef.current) return;
+
+      snap.docs.forEach((docSnap) => {
+        if (!messagesMapRef.current.has(docSnap.id)) {
+          messagesMapRef.current.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Message);
+        }
+      });
+
+      if (snap.docs.length > 0) {
+        oldestDocRef.current = snap.docs[snap.docs.length - 1];
+      }
+
+      const moreExist = snap.docs.length >= OLDER_PAGE_SIZE;
+      hasMoreRef.current = moreExist;
+      setHasMore(moreExist);
+      setMessages(sortedFromMap(messagesMapRef.current));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, `${collectionPath}/${roomId}/messages`);
+    } finally {
+      loadingOlderRef.current = false;
     }
-  }, [loading, hasMore]);
+  }, [collectionPath, roomId]);
 
   // Optimistic message send
   const sendMessage = useCallback(

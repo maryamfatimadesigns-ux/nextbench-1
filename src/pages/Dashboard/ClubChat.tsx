@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { doc, getDoc, updateDoc, serverTimestamp, writeBatch, collection, getDocs, onSnapshot, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from '../../lib/firestore-errors'
 import ChatView from '../../components/chat/ChatView';
 import { ChatSkeleton } from '../../components/ui/skeleton/Skeleton';
 import { Settings, X, Users } from 'lucide-react';
+import type { ClubData as BaseClubData } from '../../lib/clubs';
 
 interface ClubChatProps {
   panelMode?: boolean;
@@ -15,23 +16,9 @@ interface ClubChatProps {
   onBack?: () => void;
 }
 
-export interface ClubData {
-  id: string;
-  name: string;
-  description?: string;
-  avatar?: string | null;
-  type: 'public' | 'private';
-  school: string;
-  leadId: string;
-  coLeadIds?: string[];
-  memberIds?: string[];
-  memberCount?: number;
-  settings?: {
-    onlyLeadsCanPost?: boolean;
-  };
+export interface ClubData extends BaseClubData {
   pinnedMessageId?: string;
   pinnedMessageText?: string;
-  unreadBy?: string[];
 }
 
 export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChatProps = {}) {
@@ -50,6 +37,15 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
   const isMember = club?.memberIds?.includes(user?.uid || '') || false;
   const canPost = !club?.settings?.onlyLeadsCanPost || isLeadOrCo;
 
+  const clubMembers = useMemo(() => {
+    if (!club) return [];
+    const set = new Set<string>();
+    if (club.leadId) set.add(club.leadId);
+    (club.coLeadIds || []).forEach((id) => set.add(id));
+    (club.memberIds || []).forEach((id) => set.add(id));
+    return Array.from(set);
+  }, [club]);
+
   // Listen to club metadata
   useEffect(() => {
     if (!clubId) return;
@@ -67,7 +63,7 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
   }, [clubId]);
 
   // Handle pin message
-  const handlePinMessage = async (msgId: string, text?: string) => {
+  const handlePinMessage = useCallback(async (msgId: string, text?: string) => {
     if (!user || !clubId) return;
     try {
       await updateDoc(doc(db, 'clubs', clubId), {
@@ -79,10 +75,10 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
     } catch {
       showToast('Failed to pin message', 'error');
     }
-  };
+  }, [user, clubId, showToast]);
 
   // Handle unpin message
-  const handleUnpinMessage = async () => {
+  const handleUnpinMessage = useCallback(async () => {
     if (!user || !clubId) return;
     try {
       await updateDoc(doc(db, 'clubs', clubId), {
@@ -94,7 +90,12 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
     } catch {
       showToast('Failed to unpin message', 'error');
     }
-  };
+  }, [user, clubId, showToast]);
+
+  const handleBack = useCallback(() => {
+    if (onBack) onBack();
+    else navigate('/messages');
+  }, [onBack, navigate]);
 
   // Clear chat (deleted for me)
   const handleClearChat = async () => {
@@ -148,7 +149,8 @@ export default function ClubChat({ panelMode, roomIdOverride, onBack }: ClubChat
         isMember={isMember}
         isAdmin={isLeadOrCo}
         canPost={canPost}
-        onBack={onBack ? onBack : () => navigate('/messages')}
+        clubMembers={clubMembers}
+        onBack={handleBack}
         showOptions={showOptions}
         setShowOptions={setShowOptions}
         pinnedMessageText={club.pinnedMessageText}
