@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, SmilePlus, CheckCircle2, Circle, RefreshCw, Trash2 } from 'lucide-react';
+import { X, SmilePlus, CheckCircle2, Circle, RefreshCw, Trash2, CornerUpRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -208,6 +208,13 @@ export const MessageBubble = React.memo(function MessageBubble({
           {collectionPath === 'clubs' && !isMe && !isDeleted && (
             <div className="text-[11px] font-bold text-brand-teal mb-1 leading-tight tracking-wide">
               <ClubSenderName msg={msg} />
+            </div>
+          )}
+
+          {/* Forwarded label */}
+          {!isDeleted && msg.forwardedFrom && (
+            <div className={`text-[10px] font-semibold italic mb-1 flex items-center gap-1 ${isMe ? 'text-white/60' : 'text-luxury-ink/40'}`}>
+              <CornerUpRight size={11} /> Forwarded
             </div>
           )}
 
