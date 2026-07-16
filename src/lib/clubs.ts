@@ -46,6 +46,11 @@ export interface ClubData {
   city?: string;
   tags?: string[];
   unreadBy?: string[];
+  // Per-user conversation state (see src/lib/conversations.ts). Absent = empty.
+  mutedBy?: string[];
+  archivedBy?: string[];
+  pinnedBy?: string[];
+  deletedBy?: string[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────

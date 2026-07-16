@@ -33,6 +33,11 @@ interface ChatRoomItem {
   type?: string;
   otherUser?: any;
   unreadBy?: string[];
+  // Per-user conversation state (see src/lib/conversations.ts). Absent = empty.
+  mutedBy?: string[];
+  archivedBy?: string[];
+  pinnedBy?: string[];
+  deletedBy?: string[];
 }
 
 export default function MessagesLayout() {
