@@ -35,6 +35,7 @@ interface MessageListProps {
   isAdmin: boolean;
   collectionPath: 'chatRooms' | 'clubs';
   roomId: string;
+  recipientId?: string;
   onPin?: (msgId: string, text?: string) => void;
   showLightbox: (urls: string[]) => void;
   resendMessage: (tempId: string) => void;
@@ -67,6 +68,7 @@ export function MessageList({
   isAdmin,
   collectionPath,
   roomId,
+  recipientId,
   onPin,
   showLightbox,
   resendMessage,
@@ -311,6 +313,7 @@ export function MessageList({
                     resendMessage={resendMessage}
                     removeFailedMessage={removeFailedMessage}
                     isAdmin={isAdmin}
+                    recipientId={recipientId}
                   />
                 )}
               </div>

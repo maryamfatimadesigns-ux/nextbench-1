@@ -229,6 +229,7 @@ export default function ChatView({
         isAdmin={isAdmin}
         collectionPath={collectionPath}
         roomId={roomId}
+        recipientId={recipientId}
         onPin={onPin}
         showLightbox={showLightbox}
         resendMessage={resendMessage}
