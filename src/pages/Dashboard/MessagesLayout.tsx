@@ -5,11 +5,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, User, ShieldCheck, Search, Lock, Plus, X, Send, Users, Globe, Crown, ArrowLeft, Archive, BellOff, ArchiveRestore, Pin, MailOpen, Trash2, CheckCircle2, Circle } from 'lucide-react';
+import { MessageSquare, User, ShieldCheck, Search, Lock, X, Send, Users, Globe, Crown, ArrowLeft, Archive, BellOff, ArchiveRestore, Pin, MailOpen, Trash2, CheckCircle2, Circle } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
 import { db } from '../../lib/firebase';
 import {
-  collection, query, where, onSnapshot, getDoc, doc, limit,
+  collection, query, where, onSnapshot, getDoc, doc,
 } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { getOptimizedImageUrl } from '../../lib/utils';
@@ -98,6 +98,11 @@ export default function MessagesLayout() {
   const allBlockedIds = useAllBlockedUserIds();
 
   useScrollLock(showNewDM || showCreateClub);
+
+  // Clear any pending long-press timer on unmount.
+  useEffect(() => () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
 
   // Listen to toggle events from global sidebar
   useEffect(() => {
@@ -366,21 +371,25 @@ export default function MessagesLayout() {
   const allSelected = (pred: (id: string, c: ConvCollection) => boolean) =>
     selectedItems().length > 0 && selectedItems().every(({ id, c }) => pred(id, c));
 
-  const isRoomFlag = (id: string, field: 'pinnedBy' | 'mutedBy' | 'unreadBy') => {
-    const item = combinedList.find((x) => x.id === id) as any;
+  // Resolve a per-user flag from the raw source lists (NOT the view-filtered
+  // combinedList) so a selected row that has scrolled out of the current view
+  // still reports its true state — otherwise a missing lookup defaults to false
+  // and flips the bulk toggle the wrong way.
+  const isRoomFlag = (id: string, c: ConvCollection, field: 'pinnedBy' | 'mutedBy' | 'unreadBy') => {
+    const item = (c === 'clubs' ? clubs.find((x) => x.id === id) : chatRooms.find((x) => x.id === id)) as any;
     return !!item?.[field]?.includes(uid);
   };
 
   const handleBulkPin = () => {
-    const everyPinned = allSelected((id) => isRoomFlag(id, 'pinnedBy'));
+    const everyPinned = allSelected((id, c) => isRoomFlag(id, c, 'pinnedBy'));
     runBulk(everyPinned ? unpinConversation : pinConversation, everyPinned ? 'Unpinned' : 'Pinned');
   };
   const handleBulkReadToggle = () => {
-    const everyRead = allSelected((id) => !isRoomFlag(id, 'unreadBy'));
+    const everyRead = allSelected((id, c) => !isRoomFlag(id, c, 'unreadBy'));
     runBulk(everyRead ? markConversationUnread : markConversationRead, everyRead ? 'Marked unread' : 'Marked read');
   };
   const handleBulkMute = () => {
-    const everyMuted = allSelected((id) => isRoomFlag(id, 'mutedBy'));
+    const everyMuted = allSelected((id, c) => isRoomFlag(id, c, 'mutedBy'));
     runBulk(everyMuted ? unmuteConversation : muteConversation, everyMuted ? 'Unmuted' : 'Muted');
   };
   const handleBulkArchive = () => {
@@ -518,7 +527,7 @@ export default function MessagesLayout() {
         {!sidebarCollapsed && (showArchived || archivedCount > 0) && (
           showArchived ? (
             <button
-              onClick={() => setShowArchived(false)}
+              onClick={() => { exitSelectMode(); setShowArchived(false); }}
               className="w-full flex items-center gap-2 px-4 py-3 border-b border-luxury-ink/5 text-xs font-bold text-luxury-ink/60 hover:bg-surface-soft transition-colors"
             >
               <ArrowLeft size={14} /> Back to inbox
@@ -526,7 +535,7 @@ export default function MessagesLayout() {
             </button>
           ) : (
             <button
-              onClick={() => setShowArchived(true)}
+              onClick={() => { exitSelectMode(); setShowArchived(true); }}
               className="w-full flex items-center gap-3 px-4 py-3 border-b border-luxury-ink/5 hover:bg-surface-soft transition-colors text-left"
             >
               <div className="w-9 h-9 rounded-full bg-surface-soft flex items-center justify-center shrink-0">
@@ -573,6 +582,8 @@ export default function MessagesLayout() {
                   onPointerDown={() => handleRowPointerDown(club.id, 'clubs')}
                   onPointerUp={cancelLongPress}
                   onPointerLeave={cancelLongPress}
+                  onPointerMove={cancelLongPress}
+                  onPointerCancel={cancelLongPress}
                   className={`w-full flex items-center transition-colors cursor-pointer text-left ${
                     sidebarCollapsed ? 'justify-center py-3.5 px-2' : 'gap-3 py-3 px-4'
                   } ${
@@ -640,6 +651,8 @@ export default function MessagesLayout() {
                   onPointerDown={() => handleRowPointerDown(room.id, 'chatRooms')}
                   onPointerUp={cancelLongPress}
                   onPointerLeave={cancelLongPress}
+                  onPointerMove={cancelLongPress}
+                  onPointerCancel={cancelLongPress}
                   className={`w-full flex items-center transition-colors cursor-pointer text-left ${
                     sidebarCollapsed ? 'justify-center py-3.5 px-2' : 'gap-3 py-3 px-4'
                   } ${
