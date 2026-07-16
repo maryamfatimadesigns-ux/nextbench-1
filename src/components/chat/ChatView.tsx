@@ -6,7 +6,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../lib/ToastContext';
 import { useLightbox } from '../../lib/LightboxContext';
 
-import { useChatEngine, Message } from '../../hooks/useChatEngine';
+import { useChatEngine, Message, TYPING_STALE_MS } from '../../hooks/useChatEngine';
 import { MessageList } from './MessageList';
 import { MessageContextMenu } from './MessageContextMenu';
 import { ChatHeader } from './ChatHeader';
@@ -100,6 +100,8 @@ export default function ChatView({
     sendVideoMessage,
     forwardMessage,
     markAsRead,
+    typingUsers,
+    setTyping,
   } = useChatEngine({
     collectionPath,
     roomId,
@@ -163,6 +165,17 @@ export default function ChatView({
     showToast('Copied to clipboard', 'success');
   };
 
+  // Active typers: other users whose typing timestamp is within the stale
+  // window. A Firestore Timestamp has .toMillis(); tolerate a raw number too.
+  const now = Date.now();
+  const typingUserIds = Object.entries(typingUsers || {})
+    .filter(([uid, ts]) => {
+      if (uid === user?.uid) return false;
+      const ms = ts?.toMillis ? ts.toMillis() : typeof ts === 'number' ? ts : 0;
+      return now - ms < TYPING_STALE_MS;
+    })
+    .map(([uid]) => uid);
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface-base relative">
       {/* Header */}
@@ -182,6 +195,8 @@ export default function ChatView({
         selectedCount={selectedMessages.size}
         onBulkDelete={handleBulkDelete}
         onCancelSelect={() => { setIsSelectMode(false); setSelectedMessages(new Set()); }}
+        typingUserIds={typingUserIds}
+        clubMembers={clubMembers}
       />
 
       {/* Pinned Message Banner */}
@@ -244,6 +259,7 @@ export default function ChatView({
         sendMessage={sendMessage}
         sendVoiceMessage={sendVoiceMessage}
         sendVideoMessage={sendVideoMessage}
+        setTyping={setTyping}
       />
 
       <MessageContextMenu

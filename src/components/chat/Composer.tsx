@@ -35,6 +35,7 @@ interface ComposerProps {
   sendMessage: (text?: string, image?: any, replyTo?: Message | null) => void;
   sendVoiceMessage: (url: string, durationSec: number, size: number, mime: string) => Promise<void> | void;
   sendVideoMessage: (video: { url: string; poster?: string; w?: number; h?: number; duration?: number }) => Promise<void> | void;
+  setTyping: (typing: boolean) => void;
 }
 
 export function Composer({
@@ -50,6 +51,7 @@ export function Composer({
   sendMessage,
   sendVoiceMessage,
   sendVideoMessage,
+  setTyping,
 }: ComposerProps) {
   const { showToast } = useToast();
 
@@ -169,6 +171,7 @@ export function Composer({
     setNewMessage('');
     setShowQuickReplies(false);
     setReplyingTo(null);
+    setTyping(false); // sending stops the typing indicator
 
     // Send mention notifications for @tagged users in the message
     if (messageTextForMentions && user) {
@@ -190,6 +193,27 @@ export function Composer({
       formRef.current?.requestSubmit();
     }
   }, []);
+
+  // Emit typing on input; auto-stop after a short idle. The engine debounces
+  // the actual writes (<=1 per 2s while active).
+  const typingIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleTextChange = useCallback((val: string) => {
+    setNewMessage(val);
+    if (val.trim().length > 0) {
+      setTyping(true);
+      if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+      typingIdleRef.current = setTimeout(() => setTyping(false), 3000);
+    } else {
+      setTyping(false);
+      if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+    }
+  }, [setTyping]);
+
+  // Stop typing on unmount (leaving the room).
+  useEffect(() => () => {
+    if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+    setTyping(false);
+  }, [setTyping]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
@@ -444,7 +468,7 @@ export function Composer({
 
               <MentionInput
                 value={newMessage}
-                onChange={setNewMessage}
+                onChange={handleTextChange}
                 onKeyDown={handleInputKeyDown}
                 placeholder={
                   isBlocked
