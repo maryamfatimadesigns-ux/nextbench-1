@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Send, Camera, Zap, Mic, CornerDownRight, Film } from 'lucide-react';
+import { X, Send, Zap, Mic, CornerDownRight, Film, Image as ImageIcon, Paperclip, FileText } from 'lucide-react';
 import { useVoiceRecorder } from '../../hooks/useVoiceRecorder';
 import { stopAllVoicePlayback } from '../../hooks/useVoicePlayer';
 import { uploadChatImageDetailed } from '../../lib/storage';
-import { uploadChatVideo, uploadChatVideoPoster } from '../../lib/storage';
+import { uploadChatVideo, uploadChatVideoPoster, uploadChatFile } from '../../lib/storage';
 import { prepareChatVideo, type PreparedChatVideo } from '../../lib/chatVideo';
+import { formatFileSize } from '../../lib/formatFileSize';
 import { uploadVoiceMessage } from '../../lib/voiceMessage';
 import { notifyMentionedUsers } from '../../lib/mentions';
 import { useToast } from '../../lib/ToastContext';
@@ -35,6 +36,7 @@ interface ComposerProps {
   sendMessage: (text?: string, image?: any, replyTo?: Message | null) => void;
   sendVoiceMessage: (url: string, durationSec: number, size: number, mime: string) => Promise<void> | void;
   sendVideoMessage: (video: { url: string; poster?: string; w?: number; h?: number; duration?: number }) => Promise<void> | void;
+  sendFileMessage: (file: { url: string; name: string; size?: number; mime?: string; pages?: number }, caption?: string) => Promise<void> | void;
   setTyping: (typing: boolean) => void;
 }
 
@@ -51,6 +53,7 @@ export function Composer({
   sendMessage,
   sendVoiceMessage,
   sendVideoMessage,
+  sendFileMessage,
   setTyping,
 }: ComposerProps) {
   const { showToast } = useToast();
@@ -67,13 +70,18 @@ export function Composer({
   const [videoUploading, setVideoUploading] = useState(false);
   const [videoUploadProgress, setVideoUploadProgress] = useState(0);
 
+  // Pending document/file (card preview shown before upload)
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [fileUploading, setFileUploading] = useState(false);
+  const [fileUploadProgress, setFileUploadProgress] = useState(0);
+
   // Voice recording state
   const [voiceUploading, setVoiceUploading] = useState(false);
   const [voiceUploadProgress, setVoiceUploadProgress] = useState(0);
   const [voiceUploadError, setVoiceUploadError] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const {
@@ -216,16 +224,32 @@ export function Composer({
     setTyping(false);
   }, [setTyping]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.[0]) return;
-    const file = e.target.files[0];
+  // Accept an image File into the pending-image slot (shared by the media
+  // picker, paste, and drag-drop). Returns false if rejected.
+  const acceptImageFile = (file: File): boolean => {
     if (file.size > 5 * 1024 * 1024) {
       showToast('Image must be less than 5MB', 'error');
-      return;
+      return false;
     }
+    if (pendingImagePreview) URL.revokeObjectURL(pendingImagePreview);
     setPendingImageFile(file);
     setPendingImagePreview(URL.createObjectURL(file));
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    return true;
+  };
+
+  // Media button: one picker for both photos and videos (WhatsApp-style).
+  // Route the picked file to the image or video pending flow by MIME type.
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (mediaInputRef.current) mediaInputRef.current.value = '';
+    if (!file) return;
+    if (file.type.startsWith('video/')) {
+      await ingestVideoFile(file);
+    } else if (file.type.startsWith('image/')) {
+      acceptImageFile(file);
+    } else {
+      showToast('Please choose a photo or video', 'error');
+    }
   };
 
   const clearPendingImage = () => {
@@ -234,11 +258,8 @@ export function Composer({
     setPendingImagePreview(null);
   };
 
-  // Video: validate + capture poster on pick; upload + send on confirm.
-  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (videoInputRef.current) videoInputRef.current.value = '';
-    if (!file) return;
+  // Video: validate + capture poster; shared by the media picker and drag-drop.
+  const ingestVideoFile = async (file: File) => {
     try {
       const prepared = await prepareChatVideo(file);
       if (pendingVideoPoster) URL.revokeObjectURL(pendingVideoPoster);
@@ -253,6 +274,43 @@ export function Composer({
     if (pendingVideoPoster) URL.revokeObjectURL(pendingVideoPoster);
     setPendingVideo(null);
     setPendingVideoPoster(null);
+  };
+
+  // Files button: any file type (PDF, docs, zip, ...). 25MB cap.
+  const acceptDocFile = (file: File): boolean => {
+    if (file.size > 25 * 1024 * 1024) {
+      showToast('File must be less than 25MB', 'error');
+      return false;
+    }
+    setPendingFile(file);
+    return true;
+  };
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (docInputRef.current) docInputRef.current.value = '';
+    if (file) acceptDocFile(file);
+  };
+  const clearPendingFile = () => setPendingFile(null);
+
+  const handleSendFile = async () => {
+    if (!pendingFile || fileUploading || isBlocked || !isMember || !canPost) return;
+    setFileUploading(true);
+    setFileUploadProgress(0);
+    try {
+      const { url, pages } = await uploadChatFile(pendingFile, roomId, (pct) => setFileUploadProgress(pct));
+      await sendFileMessage({
+        url,
+        name: pendingFile.name,
+        size: pendingFile.size,
+        mime: pendingFile.type || undefined,
+        pages,
+      });
+      clearPendingFile();
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to send file', 'error');
+    } finally {
+      setFileUploading(false);
+    }
   };
 
   const handleSendVideo = async () => {
@@ -279,11 +337,68 @@ export function Composer({
     }
   };
 
-  // Revoke the poster object URL on unmount.
-  useEffect(() => () => { if (pendingVideoPoster) URL.revokeObjectURL(pendingVideoPoster); }, [pendingVideoPoster]);
+  // Revoke pending object URLs on unmount.
+  useEffect(() => () => {
+    if (pendingVideoPoster) URL.revokeObjectURL(pendingVideoPoster);
+    if (pendingImagePreview) URL.revokeObjectURL(pendingImagePreview);
+  }, [pendingVideoPoster, pendingImagePreview]);
+
+  // ── Paste + drag-drop ──────────────────────────────────
+  const [dragActive, setDragActive] = useState(false);
+  const canAttach = !isBlocked && isMember && canPost;
+
+  // Route an arbitrary dropped/pasted file to the right pending slot by type.
+  const ingestFile = (file: File) => {
+    if (!canAttach) return;
+    if (file.type.startsWith('image/')) acceptImageFile(file);
+    else if (file.type.startsWith('video/')) ingestVideoFile(file);
+    else acceptDocFile(file);
+  };
+
+  // Paste an image from the clipboard (screenshots, copied images).
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (!canAttach) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItem = items.find((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    if (imageItem) {
+      const file = imageItem.getAsFile();
+      if (file) {
+        e.preventDefault();
+        acceptImageFile(file);
+      }
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (!canAttach) return;
+    const file = e.dataTransfer?.files?.[0];
+    if (file) ingestFile(file);
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!canAttach) return;
+    e.preventDefault();
+    if (!dragActive) setDragActive(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only clear when leaving the composer, not when moving over a child.
+    if (e.currentTarget === e.target) setDragActive(false);
+  };
 
   return (
-    <div className="p-4 pb-safe-4 border-t border-luxury-ink/5 bg-surface-base shrink-0 z-30">
+    <div
+      className="p-4 pb-safe-4 border-t border-luxury-ink/5 bg-surface-base shrink-0 z-30 relative"
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+    >
+      {/* Drag-and-drop overlay */}
+      {dragActive && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-brand-teal/10 border-2 border-dashed border-brand-teal rounded-2xl m-1 pointer-events-none">
+          <p className="text-sm font-bold text-brand-teal">Drop to attach</p>
+        </div>
+      )}
       {/* Reply Preview Bar */}
       {replyingTo && (
         <div className="mb-3 bg-surface-card border border-luxury-ink/5 rounded-2xl px-4 py-3 flex items-start justify-between shadow-xs relative">
@@ -293,7 +408,12 @@ export function Composer({
               Replying to {replyingTo.senderId === user?.uid ? 'yourself' : replyingTo.senderName || 'user'}
             </div>
             <p className="text-xs text-luxury-ink/60 truncate leading-relaxed">
-              {replyingTo.text || '📷 Image attachment'}
+              {replyingTo.text || (
+                replyingTo.type === 'video' ? '📹 Video'
+                : replyingTo.type === 'file' ? `📎 ${replyingTo.file?.name || 'File'}`
+                : replyingTo.type === 'voice' ? '🎤 Voice message'
+                : '📷 Image'
+              )}
             </p>
           </div>
           <button onClick={() => setReplyingTo(null)} className="p-1 text-luxury-ink/40 hover:text-luxury-ink rounded-full ml-3 transition-colors">
@@ -387,6 +507,50 @@ export function Composer({
         </div>
       )}
 
+      {/* Pending File Preview */}
+      {pendingFile && (
+        <div className="mb-3 flex items-center gap-3 bg-surface-card border border-luxury-ink/10 rounded-2xl px-3 py-2 shadow-xs">
+          <div className="relative shrink-0">
+            <div className="h-16 w-16 rounded-xl border border-luxury-ink/10 bg-surface-soft flex items-center justify-center">
+              <FileText size={24} className="text-brand-teal" />
+            </div>
+            {!fileUploading && (
+              <button
+                type="button"
+                onClick={clearPendingFile}
+                className="absolute -top-1.5 -right-1.5 bg-luxury-ink text-white rounded-full p-0.5 hover:bg-red-500 transition-colors"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-luxury-ink/70 truncate">{pendingFile.name}</p>
+            {fileUploading ? (
+              <>
+                <p className="text-[11px] font-bold text-luxury-ink/50 mb-1 mt-0.5">Sending... {fileUploadProgress}%</p>
+                <div className="w-full bg-surface-soft h-1 rounded-full overflow-hidden">
+                  <div className="bg-brand-teal h-full transition-all duration-100" style={{ width: `${fileUploadProgress}%` }} />
+                </div>
+              </>
+            ) : (
+              <p className="text-[11px] text-luxury-ink/40 font-medium mt-0.5">{formatFileSize(pendingFile.size)}</p>
+            )}
+          </div>
+          {!fileUploading && (
+            <button
+              type="button"
+              onClick={handleSendFile}
+              disabled={isBlocked || !isMember || !canPost}
+              className="p-2.5 bg-brand-teal text-white rounded-full hover:opacity-90 transition-all shadow-xs disabled:opacity-30 shrink-0 active:scale-95"
+              title="Send file"
+            >
+              <Send size={16} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Action Panel Composers */}
       <AnimatePresence mode="wait">
         {isRecording ? (
@@ -428,31 +592,33 @@ export function Composer({
           </motion.div>
         ) : (
           <form ref={formRef} onSubmit={handleSendMessage} className="flex items-center gap-2">
-            <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
-            <input type="file" ref={videoInputRef} onChange={handleVideoUpload} accept="video/*" className="hidden" />
+            <input type="file" ref={mediaInputRef} onChange={handleMediaUpload} accept="image/*,video/*" className="hidden" />
+            <input type="file" ref={docInputRef} onChange={handleFileUpload} className="hidden" />
 
+            {/* Media button — photos and videos (WhatsApp-style gallery) */}
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading || isBlocked || !isMember || !canPost}
+              onClick={() => mediaInputRef.current?.click()}
+              disabled={isUploading || isBlocked || !isMember || !canPost || !!pendingVideo}
               className="p-3 bg-surface-card border border-luxury-ink/10 text-brand-teal hover:bg-brand-teal/10 rounded-full transition-all shrink-0 shadow-xs active:scale-95 disabled:opacity-50"
-              title="Send image"
+              title="Photo or video"
             >
               {isUploading ? (
                 <div className="w-5 h-5 border-2 border-brand-teal border-t-transparent rounded-full animate-spin" />
               ) : (
-                <Camera size={18} />
+                <ImageIcon size={18} />
               )}
             </button>
 
+            {/* Files button — PDF, docs, any file type */}
             <button
               type="button"
-              onClick={() => videoInputRef.current?.click()}
-              disabled={isBlocked || !isMember || !canPost || !!pendingVideo}
+              onClick={() => docInputRef.current?.click()}
+              disabled={isBlocked || !isMember || !canPost || !!pendingFile}
               className="p-3 bg-surface-card border border-luxury-ink/10 text-brand-teal hover:bg-brand-teal/10 rounded-full transition-all shrink-0 shadow-xs active:scale-95 disabled:opacity-50"
-              title="Send video"
+              title="Attach a file"
             >
-              <Film size={18} />
+              <Paperclip size={18} />
             </button>
 
             <div className="flex-1 flex items-center gap-1.5 bg-surface-card rounded-full border border-luxury-ink/10 shadow-xs px-3.5 relative">
@@ -471,6 +637,7 @@ export function Composer({
                 value={newMessage}
                 onChange={handleTextChange}
                 onKeyDown={handleInputKeyDown}
+                onPaste={handlePaste}
                 placeholder={
                   isBlocked
                     ? 'Messaging is disabled'
