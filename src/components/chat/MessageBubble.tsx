@@ -329,9 +329,12 @@ export const MessageBubble = React.memo(function MessageBubble({
         )}
       </div>
 
-      {/* Reactions list */}
-      {!isDeleted && msg.reactions && (
-        <div className={`mt-1 flex w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+      {/* Reactions list + emoji picker. Always mounted for non-deleted messages
+          so the picker can open even before the message has any reaction
+          (MessageReactions renders nothing visible when reactions are empty and
+          the bar is closed). */}
+      {!isDeleted && !isOptimistic && !isFailed && (
+        <div className={`flex w-full ${(msg.reactions && Object.keys(msg.reactions).length > 0) || activeReactionMsgId === msg.id ? 'mt-1' : ''} ${isMe ? 'justify-end' : 'justify-start'}`}>
           <MessageReactions
             reactions={msg.reactions}
             messageId={msg.id}
