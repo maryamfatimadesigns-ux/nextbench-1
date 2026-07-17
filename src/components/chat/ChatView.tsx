@@ -98,6 +98,7 @@ export default function ChatView({
     deleteForEveryoneBulk,
     sendVoiceMessage,
     sendVideoMessage,
+    sendFileMessage,
     forwardMessage,
     markAsRead,
     markVisibleRead,
@@ -271,6 +272,7 @@ export default function ChatView({
         sendMessage={sendMessage}
         sendVoiceMessage={sendVoiceMessage}
         sendVideoMessage={sendVideoMessage}
+        sendFileMessage={sendFileMessage}
         setTyping={setTyping}
       />
 
