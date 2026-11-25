@@ -220,6 +220,12 @@ export default function Footer() {
             >
               Transparency
             </Link>
+            <Link to="/delete-account" className="text-[10px] font-bold uppercase tracking-widest transition-colors" style={{ color: 'var(--color-luxury-ink-muted)' }}
+              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-brand-pink)'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--color-luxury-ink-muted)'}
+            >
+              Delete Account
+            </Link>
             <Link to="/careers" className="text-[10px] font-bold uppercase tracking-widest transition-colors" style={{ color: 'var(--color-luxury-ink-muted)' }}
               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-brand-pink)'}
               onMouseLeave={(e) => e.currentTarget.style.color = 'var(--color-luxury-ink-muted)'}

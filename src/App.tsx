@@ -49,6 +49,7 @@ const TermsPage     = lazyWithRetry(() => import('./pages/Legal/TermsPage'));
 const PrivacyPage   = lazyWithRetry(() => import('./pages/Legal/PrivacyPage'));
 const CareersPage   = lazyWithRetry(() => import('./pages/Legal/CareersPage'));
 const TransparencyPage = lazyWithRetry(() => import('./pages/Legal/TransparencyPage'));
+const DeleteAccountPage = lazyWithRetry(() => import('./pages/Legal/DeleteAccountPage'));
 const UsernameProfile = lazyWithRetry(() => import('./pages/Dashboard/UsernameProfile'));
 const Invite        = lazyWithRetry(() => import('./pages/Dashboard/Invite'));
 const NotFound      = lazyWithRetry(() => import('./pages/NotFound'));
@@ -199,6 +200,8 @@ export default function App() {
                 <Route path="/terms"        element={<TermsPage />} />
                 <Route path="/privacy"      element={<PrivacyPage />} />
                 <Route path="/transparency" element={<TransparencyPage />} />
+                {/* Public account-deletion page required by Google Play. */}
+                <Route path="/delete-account" element={<DeleteAccountPage />} />
                 <Route path="/login"        element={<Login />} />
                 <Route path="/signup"       element={<Signup />} />
                 <Route path="/org-signup"   element={<OrgSignup />} />

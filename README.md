@@ -34,7 +34,7 @@ A premium, luxury student-to-student marketplace where verified students buy, se
 ### 1. Clone & Install
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/maryamfatimadesigns-ux/nextbench-1
 cd nextbench-1
 npm install
 ```

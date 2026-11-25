@@ -11,7 +11,8 @@ import { uploadPostImageDetailed, uploadPostPdf, uploadPostVideo } from '../../l
 import { getOptimizedImageUrl } from '../../lib/utils';
 import { useFollowingIds } from '../../lib/follows';
 import { isTextSafe } from '../../lib/moderation';
-import { checkAllImagesSafety, preloadModerationModel } from '../../lib/imageModeration';
+import { preloadModerationModel } from '../../lib/imageModeration';
+import { submitPost, submitPostIsUnavailable } from '../../lib/posts';
 import { createNotification } from '../../lib/notifications';
 import { notifyMentionedUsers } from '../../lib/mentions';
 import ShareModal from '../../components/ui/ShareModal';
@@ -912,38 +913,21 @@ export default function Feed() {
       }
 
 
+      // Moderation is server-owned. The local check below only avoids uploading obviously blocked
+      // text; the stored status comes from the backend (`submitPost` -> `evaluatePostModeration`),
+      // so a modified bundle cannot approve its own content. Media posts are held for review
+      // because the backend cannot inspect an image.
       const isTextClean = isTextSafe(title) && isTextSafe(content);
-      let areImagesSafe = true;
-      let isImageModerationUnavailable = false;
-
-      if (imageUrls.length > 0 && isTextClean) {
-        // Only run NSFW scan if text is already clean (otherwise post goes to pending anyway)
-        setSubmittingStatus('Scanning images for safety...');
-        const moderationResult = await checkAllImagesSafety(imageFiles);
-        areImagesSafe = moderationResult.isSafe;
-        isImageModerationUnavailable = !!moderationResult.isUnavailable;
-        if (!areImagesSafe) {
-          console.log('[Feed] Image flagged:', moderationResult.reason);
-        }
-      }
-
-      const shouldAutoApprove = isTextClean && areImagesSafe && !isImageModerationUnavailable;
-      const initialStatus = shouldAutoApprove ? 'approved' : 'pending';
       setSubmittingStatus('Publishing...');
 
-      const postDocRef = await addDoc(collection(db, 'posts'), {
+      const submission = {
         title,
         content,
         type,
         isAnonymous: isPostAnonymous,
         personaName: isPostAnonymous ? personaName : null,
-        reactionsCount: type === 'confession' ? {} : null,
         city: userData.city || 'Lucknow',
         school: userData.school,
-        authorId: user.uid,
-        authorName: isPostAnonymous ? personaName : (userData.name || user.email),
-        authorProfilePicture: isPostAnonymous ? null : (userData.profilePicture || null),
-        status: initialStatus,
         privacy,
         imageUrls,
         imageWidth: imagesDetailed[0]?.w || null,
@@ -951,20 +935,43 @@ export default function Feed() {
         imagesDetailed,
         ...(pdfUrl ? { pdfUrl, pdfPages } : {}),
         ...(videoUrl ? { videoUrl } : {}),
-        upvotesCount: 0,
-        repliesCount: 0,
         ...(showPollCreator && pollChoices.filter(c => c.trim()).length >= 2 ? {
           poll: {
             choices: pollChoices.filter(c => c.trim()),
-            expiresAt: new Date(Date.now() + (pollDays * 86400000) + (pollHours * 3600000) + (pollMinutes * 60000)),
+            expiresAt: Date.now() + (pollDays * 86400000) + (pollHours * 3600000) + (pollMinutes * 60000),
             votes: {},
           }
         } : {}),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      };
 
-      if (shouldAutoApprove) {
+      let postId: string;
+      let createdStatus: 'approved' | 'pending';
+      try {
+        const created = await submitPost(submission);
+        postId = created.id;
+        createdStatus = created.status;
+      } catch (error) {
+        if (!submitPostIsUnavailable(error)) throw error;
+        // The callable is not in the deployed Functions build yet. The rules still accept a
+        // `pending` post from its author and the `moderatePost` trigger promotes clean text posts,
+        // so posting keeps working across a partial deployment.
+        const ref = await addDoc(collection(db, 'posts'), {
+          ...submission,
+          authorId: user.uid,
+          authorName: isPostAnonymous ? (personaName || 'Anonymous') : (userData.name || user.email),
+          authorProfilePicture: isPostAnonymous ? null : (userData.profilePicture || null),
+          status: 'pending',
+          reactionsCount: type === 'confession' ? {} : null,
+          upvotesCount: 0,
+          repliesCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        postId = ref.id;
+        createdStatus = 'pending';
+      }
+
+      if (createdStatus === 'approved') {
         showToast('Post published successfully!', 'success');
         
         // Notify followers of the author in real-time (skip for anonymous posts)
@@ -983,8 +990,8 @@ export default function Feed() {
               type: 'new_post', 
               title: 'New Post', 
               message: title?.trim() ? `${authorName} just posted: "${title}"` : `${authorName} just shared a new post`, 
-              link: `/post/${postDocRef.id}`,
-              postId: postDocRef.id
+              link: `/post/${postId}`,
+              postId
             });
           }
         }
@@ -995,16 +1002,14 @@ export default function Feed() {
             content,
             user.uid,
             isPostAnonymous ? 'Someone' : (userData.name || 'Someone'),
-            { type: 'post_reply', link: `/post/${postDocRef.id}`, postId: postDocRef.id }
+            { type: 'post_reply', link: `/post/${postId}`, postId }
           ).catch(err => console.warn('Failed to notify mentioned users in post:', err));
         }
       } else {
         if (!isTextClean) {
           showToast('Post flagged for containing sensitive words. Submitted for review.', 'warning');
-        } else if (isImageModerationUnavailable) {
-          showToast('Image verification is temporarily offline. Post submitted for manual admin review.', 'warning');
-        } else if (!areImagesSafe) {
-          showToast('Image flagged by safety check. Submitted for manual review.', 'warning');
+        } else if (imageUrls.length > 0 || pdfUrl || videoUrl) {
+          showToast('Post submitted for review. Posts with media are checked by an admin.', 'success');
         } else {
           showToast('Post submitted for approval!', 'success');
         }

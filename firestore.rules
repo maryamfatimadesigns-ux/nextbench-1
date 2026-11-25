@@ -678,16 +678,17 @@ service cloud.firestore {
           || request.auth.uid == resource.data.authorId
           || resource.data.status == 'approved');
 
+      // Moderation is server-owned. A client may only submit `pending`; `approved` is written by the
+      // `submitPost` callable and the `moderatePost` trigger, which use the Admin SDK and therefore
+      // bypass these rules. Accepting `approved` here made the client the approval authority: a
+      // modified app could publish unmoderated content, and the document was already listable in the
+      // feed between the write and the trigger's demotion.
       allow create: if isVerified()
         && isValidId(postId)
         && request.auth.uid == incoming().authorId
         && isValidPost(incoming())
-        && !incoming().keys().hasAny(['searchTokens', 'searchTokensUpdatedAt', 'trendingBadge'])
-        && (
-          incoming().status == 'pending'
-          ||
-          incoming().status == 'approved'
-        )
+        && !incoming().keys().hasAny(['searchTokens', 'searchTokensUpdatedAt', 'trendingBadge', 'moderationFlagged', 'moderationReason'])
+        && incoming().status == 'pending'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
@@ -1012,8 +1013,19 @@ service cloud.firestore {
         && incoming().reporterId == request.auth.uid
         && incoming().status == 'pending'
         && incoming().createdAt == request.time;
+      // Only an admin may resolve/dismiss or remove a report: the moderation decision is not a
+      // client-writable field, and a reporter cannot retract evidence of their own report.
       allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // === ACCOUNT DELETION (server-owned) ===
+    // `requestAccountDeletion` writes this document with the Admin SDK. Clients may only read the
+    // status of their own request; no client can create, modify or clear one.
+    match /deletionRequests/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+      allow create, update, delete: if false;
     }
 
     // === USERNAMES ===
