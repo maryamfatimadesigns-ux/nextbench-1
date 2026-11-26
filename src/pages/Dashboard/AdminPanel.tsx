@@ -16,7 +16,9 @@ interface PendingUser { id: string; name: string; school: string; email: string;
 interface PendingProduct { id: string; title: string; category: string; price: number; sellerName: string; sellerId: string; image: string; description: string; }
 interface SchoolRequest { id: string; schoolName: string; city: string; website: string; requesterName: string; requesterEmail: string; idCardUrl: string; status: string; }
 interface PendingPost { id: string; title: string; content: string; type: string; school: string; authorName: string; status: string; city?: string; isAnonymous?: boolean; personaName?: string; realAuthorName?: string; }
-interface Report { id: string; reporterId: string; contentType: string; contentId: string; reason: string; details: string; status: string; createdAt: any; }
+// `reports.ts` writes the optional description as `notes`; older rows used `details`. Both are
+// read so Android and website submissions render identically.
+interface Report { id: string; reporterId: string; contentType: string; contentId: string; reason: string; details?: string | null; notes?: string | null; status: string; createdAt: any; }
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('Verifications');
@@ -25,6 +27,7 @@ export default function AdminPanel() {
   const [pendingSchoolRequests, setPendingSchoolRequests] = useState<SchoolRequest[]>([]);
   const [pendingPosts, setPendingPosts] = useState<PendingPost[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [reportFilter, setReportFilter] = useState<'pending' | 'resolved' | 'dismissed'>('pending');
   const [allUsers, setAllUsers] = useState<PendingUser[]>([]);
   const [schools, setSchools] = useState<{name: string, city: string}[]>([]);
   const [editingSchoolId, setEditingSchoolId] = useState<string | null>(null);
@@ -166,14 +169,14 @@ export default function AdminPanel() {
     } else if (activeTab === 'Reports') {
       const fetchReports = async () => {
         try {
-          const q = query(collection(db, 'reports'), where('status', '==', 'pending'));
+          const q = query(collection(db, 'reports'), where('status', '==', reportFilter));
           const snapshot = await getDocs(q);
           setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Report)));
         } catch (err) { handleFirestoreError(err, OperationType.LIST, 'reports'); }
       };
       fetchReports();
     }
-  }, [userData, activeTab]);
+  }, [userData, activeTab, reportFilter]);
 
   const handleApproveUser = async (userId: string, userName: string) => {
     try {
@@ -595,7 +598,21 @@ export default function AdminPanel() {
       {/* Reports Tab */}
       {activeTab === 'Reports' && (
         <div className="space-y-4">
-          <h2 className="text-lg font-serif font-bold text-luxury-ink italic mb-4">Pending Reports <span className="not-italic text-luxury-ink/30">({reports.length})</span></h2>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {(['pending', 'resolved', 'dismissed'] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => setReportFilter(status)}
+                className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-colors ${reportFilter === status ? 'bg-brand-teal text-white border-brand-teal' : 'text-luxury-ink/50 border-luxury-ink/10 hover:text-luxury-ink'}`}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+          <h2 className="text-lg font-serif font-bold text-luxury-ink italic mb-4">
+            {reportFilter === 'pending' ? 'Pending' : reportFilter === 'resolved' ? 'Resolved' : 'Dismissed'} Reports{' '}
+            <span className="not-italic text-luxury-ink/30">({reports.length})</span>
+          </h2>
           {reports.length === 0 && <div className="theme-card rounded-2xl p-12 text-center border text-luxury-ink/30 font-serif italic text-lg" style={{ borderColor: 'var(--color-border)' }}>No pending reports ✓</div>}
           {reports.map(item => (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={item.id}
@@ -615,7 +632,7 @@ export default function AdminPanel() {
                   <button onClick={() => handleResolveReport(item.id)} className="p-2 rounded-xl bg-brand-pink text-white hover:bg-brand-pink/80 transition-all shadow-lg" ><CheckCircle size={18} /></button>
                 </div>
               </div>
-              {item.details && <p className="text-sm text-luxury-ink/60 whitespace-pre-wrap bg-surface-base p-4 rounded-xl w-full">{item.details}</p>}
+              {(item.details || item.notes) && <p className="text-sm text-luxury-ink/60 whitespace-pre-wrap bg-surface-base p-4 rounded-xl w-full">{item.details || item.notes}</p>}
             </motion.div>
           ))}
         </div>

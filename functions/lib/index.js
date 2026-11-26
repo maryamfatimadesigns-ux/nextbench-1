@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.maintainMarketplaceLifecycle = exports.getRecommendedProducts = exports.getSuggestedUsers = exports.learnChatRoomAffinity = exports.learnReactionAffinity = exports.learnUpvoteAffinity = exports.learnFollowAffinity = exports.learnWishlistAffinity = exports.computeDerived = exports.aggregateSellerReputation = exports.indexClubSearchTokens = exports.indexPostSearchTokens = exports.indexProductSearchTokens = exports.indexUserSearchTokens = exports.notifyOnFirstStory = exports.mirrorFollowEdgeOnDelete = exports.mirrorFollowEdgeOnCreate = exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.deletePostCascade = exports.getLandingStats = exports.createProductReview = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getBlockedUsers = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
+exports.getLinkPreview = exports.maintainMarketplaceLifecycle = exports.getRecommendedProducts = exports.getSuggestedUsers = exports.learnChatRoomAffinity = exports.learnReactionAffinity = exports.learnUpvoteAffinity = exports.learnFollowAffinity = exports.learnWishlistAffinity = exports.computeDerived = exports.aggregateSellerReputation = exports.indexClubSearchTokens = exports.indexPostSearchTokens = exports.indexProductSearchTokens = exports.indexUserSearchTokens = exports.notifyOnFirstStory = exports.mirrorFollowEdgeOnDelete = exports.mirrorFollowEdgeOnCreate = exports.createNotification = exports.rateLimitReply = exports.rateLimitMessage = exports.rateLimitPost = exports.requestAccountDeletion = exports.submitPost = exports.deletePostCascade = exports.getLandingStats = exports.createProductReview = exports.getProductReviews = exports.getPostReplies = exports.searchDiscovery = exports.getDiscoveryFeed = exports.isReferralCodeAvailable = exports.lookupReferralCode = exports.searchPublicUsers = exports.getPublicProfileContent = exports.getPublicProfile = exports.getBlockedUsers = exports.getPublicUsers = exports.onUserUpdated = exports.moderateReply = exports.moderatePost = exports.unsubscribeFromEmails = exports.broadcastEmail = exports.sendWeeklyDigest = exports.notifyOnProductReserved = exports.notifyOnNewMessage = exports.submitInviteCode = exports.createInviteCode = exports.verifyAuthOtpEmail = exports.sendAuthOtpEmail = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -8,6 +8,8 @@ const params_1 = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const postPayload_1 = require("./postPayload");
+const accountDeletion_1 = require("./accountDeletion");
 admin.initializeApp();
 const db = admin.firestore();
 /** Allowed origins — explicit list is more reliable than `cors: CORS_ORIGINS` for error responses */
@@ -1149,6 +1151,16 @@ exports.moderatePost = (0, firestore_1.onDocumentCreated)({ document: "posts/{po
             moderationReason: moderation.reason,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        return;
+    }
+    // Convergence for direct writes: a post stored as `pending` by an older client (or written
+    // before `submitPost` existed) is promoted to the same decision the backend would make now.
+    // This never overrides an admin hold, because holds are later updates and this is a create
+    // trigger. See `promotionPatch` for the policy (`AUTO_APPROVE_MEDIA = false` keeps media
+    // posts pending).
+    const promotion = (0, postPayload_1.promotionPatch)(data);
+    if (promotion) {
+        await snapshot.ref.update(Object.assign(Object.assign({}, promotion), { updatedAt: admin.firestore.FieldValue.serverTimestamp() }));
     }
 });
 exports.moderateReply = (0, firestore_1.onDocumentCreated)({ document: "post_replies/{replyId}" }, async (event) => {
@@ -1871,6 +1883,209 @@ exports.deletePostCascade = (0, https_1.onCall)({ invoker: "public", cors: CORS_
     await postRef.delete();
     return { success: true, deleted: { replies, upvotes, downvotes, reactions, saves } };
 });
+/**
+ * Server-authoritative post creation.
+ *
+ * Clients may no longer create an `approved` post: `firestore.rules` only admits `pending` from a
+ * client, and this callable (Admin SDK) is the path that can store `approved`. The status is
+ * computed by `buildPostDocument` -> `evaluatePostModeration`, and any `status` in the submitted
+ * payload is ignored.
+ *
+ * Returns the stored status so the client can tell the user whether the post is live or waiting for
+ * review, instead of assuming success.
+ */
+exports.submitPost = (0, https_1.onCall)({ invoker: "public", cors: CORS_ORIGINS, timeoutSeconds: 60 }, async (request) => {
+    var _a, _b, _c, _d, _e;
+    const uid = assertAuthedUid(request);
+    if (((_b = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.token) === null || _b === void 0 ? void 0 : _b.email_verified) !== true) {
+        throw new https_1.HttpsError("failed-precondition", "Verify your email before posting.");
+    }
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+        throw new https_1.HttpsError("failed-precondition", "Your profile is missing. Sign in again.");
+    }
+    const profile = (_c = userSnap.data()) !== null && _c !== void 0 ? _c : {};
+    if (profile.verified !== true) {
+        throw new https_1.HttpsError("permission-denied", "Your account must be verified before posting.");
+    }
+    let built;
+    try {
+        built = (0, postPayload_1.buildPostDocument)((_e = (_d = request.data) === null || _d === void 0 ? void 0 : _d.post) !== null && _e !== void 0 ? _e : request.data, {
+            uid,
+            name: typeof profile.name === "string" ? profile.name : null,
+            username: typeof profile.username === "string" ? profile.username : null,
+            school: typeof profile.school === "string" ? profile.school : null,
+            city: typeof profile.city === "string" ? profile.city : null,
+            profilePicture: typeof profile.profilePicture === "string" ? profile.profilePicture : null,
+            anonymousPersonaName: typeof profile.anonymousPersonaName === "string"
+                ? profile.anonymousPersonaName
+                : null,
+        });
+    }
+    catch (error) {
+        if (error instanceof postPayload_1.PostValidationError) {
+            throw new https_1.HttpsError("invalid-argument", error.message);
+        }
+        throw error;
+    }
+    const postRef = db.collection("posts").doc();
+    await postRef.set(Object.assign(Object.assign({}, built.document), { createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }));
+    return {
+        id: postRef.id,
+        status: built.decision.status,
+        flagged: built.decision.flagged,
+        reason: built.decision.reason,
+    };
+});
+/** The recent-sign-in window the deletion callable enforces. Mirrored by both clients. */
+const DELETION_RECENT_AUTH_MS = 5 * 60 * 1000;
+/**
+ * Server-authoritative account deletion.
+ *
+ * The Android client and the public `/delete-account` page both call this; it did not exist in the
+ * deployed backend, so the in-app deletion path failed with `not-found`. Firestore rules deny client
+ * deletes, so this callable is the only path.
+ *
+ * Idempotent: re-invoking after a completed delete returns `completed`. Requires a recent sign-in
+ * (`auth_time` within 5 minutes) because the action is irreversible, and requires the literal
+ * `DELETE` so a stray call cannot delete an account.
+ */
+exports.requestAccountDeletion = (0, https_1.onCall)({ invoker: "public", cors: CORS_ORIGINS, timeoutSeconds: 540 }, async (request) => {
+    var _a, _b, _c, _d;
+    const uid = assertAuthedUid(request);
+    const token = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.token;
+    if ((token === null || token === void 0 ? void 0 : token.admin) === true) {
+        throw new https_1.HttpsError("permission-denied", "Admin accounts cannot be deleted from the app.");
+    }
+    const authTime = ((_b = token === null || token === void 0 ? void 0 : token.auth_time) !== null && _b !== void 0 ? _b : 0) * 1000;
+    if (!authTime || Date.now() - authTime > DELETION_RECENT_AUTH_MS) {
+        throw new https_1.HttpsError("failed-precondition", "For your security, sign in again before deleting your account.");
+    }
+    const confirmation = String((_d = (_c = request.data) === null || _c === void 0 ? void 0 : _c.confirmation) !== null && _d !== void 0 ? _d : "").trim();
+    if (confirmation !== "DELETE") {
+        throw new https_1.HttpsError("invalid-argument", "Type DELETE to confirm.");
+    }
+    const stateRef = db.collection("deletionRequests").doc(uid);
+    const existing = await stateRef.get();
+    if (existing.exists && existing.get("status") === "completed") {
+        return { status: "completed" };
+    }
+    await stateRef.set({
+        status: "in_progress",
+        userId: uid,
+        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        attempts: admin.firestore.FieldValue.increment(1),
+    }, { merge: true });
+    try {
+        await deleteUserData(uid);
+        // Auth last: while the account exists the user can retry and support can identify them.
+        await admin.auth().deleteUser(uid);
+        await stateRef.set({ status: "completed", completedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return { status: "completed" };
+    }
+    catch (error) {
+        console.error("[requestAccountDeletion] partial failure", uid, error);
+        await stateRef.set({ status: "failed", lastError: String(error) }, { merge: true });
+        throw new https_1.HttpsError("internal", "Account deletion did not complete. Please try again.");
+    }
+});
+/**
+ * Deletes everything owned by `uid`, anonymises retained records, and leaves cross-user history
+ * intact. The ordered delete/anonymise split is `accountDeletionPlan()`; the profile document is
+ * removed last so a failure is visible and retryable.
+ */
+async function deleteUserData(uid) {
+    const ledClubs = await db.collection("clubs").where("leadId", "==", uid).limit(1).get();
+    if (!ledClubs.empty) {
+        throw new Error("Transfer club leadership before deleting your account.");
+    }
+    for (const step of (0, accountDeletion_1.accountDeletionPlan)()) {
+        if ((0, accountDeletion_1.isDestructiveRetainedDelete)(step)) {
+            // A plan edit that would erase moderation evidence must fail loudly, not silently.
+            throw new Error(`Refusing to delete retained collection ${step.collection}.`);
+        }
+        const query = db.collection(step.collection).where(step.field, "==", uid);
+        if (step.op === "delete") {
+            await drainQuery(query);
+        }
+        else if (step.patch) {
+            await patchWhere(query, step.patch);
+        }
+    }
+    await db.collection("rate_limits").doc(`verify_${uid}`).delete().catch(() => undefined);
+    await deleteCollectionTree(`users/${uid}`);
+    for (const prefix of [`identity/${uid}/`, `organization/${uid}/`]) {
+        const [files] = await admin.storage().bucket().getFiles({ prefix });
+        await Promise.all(files.map((file) => file.delete().catch(() => undefined)));
+    }
+    const memberships = await db.collection("clubs").where("memberIds", "array-contains", uid).get();
+    for (const doc of memberships.docs) {
+        await doc.ref.update({
+            memberIds: admin.firestore.FieldValue.arrayRemove(uid),
+            coLeadIds: admin.firestore.FieldValue.arrayRemove(uid),
+            memberCount: admin.firestore.FieldValue.increment(-1),
+            unreadBy: admin.firestore.FieldValue.arrayRemove(uid),
+            mutedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            archivedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            pinnedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            deletedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            [`typingUsers.${uid}`]: admin.firestore.FieldValue.delete(),
+        });
+    }
+    const rooms = await db.collection("chatRooms").where("participants", "array-contains", uid).get();
+    for (const room of rooms.docs) {
+        await room.ref.update({
+            participants: admin.firestore.FieldValue.arrayRemove(uid),
+            unreadBy: admin.firestore.FieldValue.arrayRemove(uid),
+            mutedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            archivedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            pinnedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            deletedBy: admin.firestore.FieldValue.arrayRemove(uid),
+            [`typingUsers.${uid}`]: admin.firestore.FieldValue.delete(),
+            status: "closed",
+        });
+        // Messages are the counterpart's history: keep them, strip the display identity.
+        await patchWhere(room.ref.collection("messages").where("senderId", "==", uid), {
+            senderName: accountDeletion_1.DELETED_USER_LABEL,
+            senderAvatar: admin.firestore.FieldValue.delete(),
+        });
+    }
+    const referred = await db.collection("users").where("referredBy", "==", uid).get();
+    for (const doc of referred.docs) {
+        await doc.ref.update({ referredBy: admin.firestore.FieldValue.delete() });
+    }
+    await db.collection("users").doc(uid).delete();
+}
+/** Deletes every document a query returns, in batches, until the query is empty. */
+async function drainQuery(query) {
+    for (let pass = 0; pass < 20; pass += 1) {
+        const written = await deleteQueryDocs(query.limit(450));
+        if (written === 0)
+            return;
+    }
+}
+/** Applies the same patch to every document a query returns, in batches. */
+async function patchWhere(query, patch) {
+    const snap = await query.get();
+    for (let index = 0; index < snap.docs.length; index += 450) {
+        const batch = db.batch();
+        snap.docs.slice(index, index + 450).forEach((docSnap) => batch.update(docSnap.ref, patch));
+        await batch.commit();
+    }
+}
+/** Removes every subcollection under a document path (bounded depth, batched). */
+async function deleteCollectionTree(path, depth = 0) {
+    if (depth > 3)
+        return;
+    const collections = await db.doc(path).listCollections();
+    for (const collection of collections) {
+        const snap = await collection.limit(450).get();
+        for (const docSnap of snap.docs) {
+            await deleteCollectionTree(docSnap.ref.path, depth + 1);
+        }
+        await drainQuery(collection);
+    }
+}
 exports.rateLimitPost = (0, firestore_1.onDocumentCreated)({ document: "posts/{postId}" }, async (event) => {
     var _a;
     const snapshot = event.data;
@@ -1941,10 +2156,10 @@ exports.createNotification = (0, https_1.onCall)({ invoker: "public", cors: CORS
     if (!userId || !type || !title || !message) {
         throw new https_1.HttpsError("invalid-argument", "Missing required fields.");
     }
-    // Rate Limiting (max 15 notification creations/minute per user)
-    const allowed = await enforceRateLimit(uid, 'notif_create', 15, 60000);
+    // Rate Limiting (max 50 notification creations/minute per user)
+    const allowed = await enforceRateLimit(uid, 'notif_create', 50, 60000);
     if (!allowed) {
-        throw new https_1.HttpsError("resource-exhausted", "Rate limit exceeded. Max 15 notifications per minute.");
+        throw new https_1.HttpsError("resource-exhausted", "Rate limit exceeded. Max 50 notifications per minute.");
     }
     // Restrict administrative/sensitive notification types to actual admin users
     const adminNotifTypes = ['listing_approved', 'listing_rejected', 'admin_promoted', 'user_approved'];
@@ -2521,6 +2736,7 @@ exports.getSuggestedUsers = (0, https_1.onCall)({ invoker: "public", cors: CORS_
             ? db.collection("follows")
                 .where("followingId", "in", candidateIds)
                 .get()
+                .then(snap => ({ docs: snap.docs.filter(d => followingList.includes(d.get("followerId"))) }))
             : Promise.resolve({ docs: [] }),
         db.collection("user_affinity").where(admin.firestore.FieldPath.documentId(), "in", candidateIds).get(),
         db.collection("user_affinity").doc(uid).get(),
@@ -2632,4 +2848,7 @@ exports.maintainMarketplaceLifecycle = (0, scheduler_1.onSchedule)({ schedule: "
         await batch.commit();
     console.log("maintainMarketplaceLifecycle", { writes, renewalCandidates: renewals.size, expiryCandidates: expirations.size, reservationCandidates: staleReservations.size });
 });
+// ── Chat link previews (Phase 4) ─────────────────────────────────────────────
+var linkPreview_1 = require("./linkPreview");
+Object.defineProperty(exports, "getLinkPreview", { enumerable: true, get: function () { return linkPreview_1.getLinkPreview; } });
 //# sourceMappingURL=index.js.map
